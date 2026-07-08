@@ -87,7 +87,9 @@ jobs:
           restore-keys: audit-
 
       - name: Install cargo-audit
-        run: cargo install cargo-audit --locked
+        # Skip the build when a cached ~/.cargo/bin/cargo-audit was restored;
+        # `cargo install` errors ("binary already exists") on a warm cache.
+        run: command -v cargo-audit >/dev/null 2>&1 || cargo install cargo-audit --locked
 
       # Fail the build on any crate with a known RUSTSEC advisory so a
       # vulnerable dependency cannot be compiled into a released binary.
