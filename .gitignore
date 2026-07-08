@@ -1,0 +1,95 @@
+# ── Secrets: env files ──────────────────────────────────
+.env
+.env.*
+!.env.example
+!.env.sample
+.envrc
+
+# ── Secrets: SSH / TLS / PGP keys ───────────────────────
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+id_rsa*
+id_ed25519*
+id_ecdsa*
+id_dsa*
+*.gpg
+*.asc
+
+# ── Secrets: generic credentials files ──────────────────
+credentials
+credentials.json
+credentials.yml
+credentials.yaml
+secrets.json
+secrets.yml
+secrets.yaml
+.secrets
+.netrc
+.htpasswd
+
+# ── Cloud: AWS ──────────────────────────────────────────
+.aws/
+aws-exports.js
+
+# ── Cloud: GCP ──────────────────────────────────────────
+.gcp/
+application_default_credentials.json
+gha-creds-*.json
+*-service-account.json
+*.service-account.json
+
+# ── Cloud: Azure ────────────────────────────────────────
+.azure/
+*.publishsettings
+azureauth.properties
+
+# ── Kubernetes ──────────────────────────────────────────
+kubeconfig
+.kube/config
+
+# ── Terraform ───────────────────────────────────────────
+*.tfstate
+*.tfstate.*
+*.tfstate.backup
+.terraform/
+.terraform.lock.hcl
+*.tfvars
+!example.tfvars
+!*.example.tfvars
+
+# ── HashiCorp Vault ─────────────────────────────────────
+.vault-token
+
+# ── Docker registry auth ────────────────────────────────
+.docker/config.json
+
+# ── Language registry credentials ───────────────────────
+.npmrc
+.pypirc
+.cargo/credentials
+.cargo/credentials.toml
+
+# ── OS ──────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+
+# ── IDEs ────────────────────────────────────────────────
+.idea/
+.vscode/
+
+# ── Local AI tooling state ──────────────────────────────
+.claude/settings.local.json
+.serena/
+# ── Cargo build output ──────────────────────────────────
+/target/
+**/*.rs.bk
+
+# ── Cargo package output ────────────────────────────────
+*.orig
+
+# ── rust-analyzer / IDE ─────────────────────────────────
+/rust-analyzer/
