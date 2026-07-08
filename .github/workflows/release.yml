@@ -100,6 +100,10 @@ jobs:
     name: Attach binaries to release
     needs: build
     runs-on: ubuntu-latest
+    # Gate the write-privileged publish step behind a manual approval
+    # (required reviewer on the `release` environment) so no one can rebuild
+    # and clobber a published release's binaries without a second-party sign-off.
+    environment: release
     permissions:
       contents: write
     env:
