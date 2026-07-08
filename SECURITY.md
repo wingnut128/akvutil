@@ -12,6 +12,8 @@ confirmed, we will coordinate a fix and a disclosure timeline with you.
 
 ## Supported Versions
 
-This project is developed against the `main` branch. Only the latest commit
-on `main` receives security fixes; there are no released versions or
-backports.
+Security fixes land on `main` and ship in the next tagged release. Only the
+**latest release** (and the current `main`) is supported — there are no
+backports to older tags. If you run a prebuilt binary from the
+[Releases](https://github.com/wingnut128/akvutil/releases) page, update to the
+latest release to receive fixes.

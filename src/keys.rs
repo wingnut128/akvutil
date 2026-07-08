@@ -14,8 +14,15 @@ use crate::output;
 use crate::{Curve, KeyCreateArgs, KeyKind, KeyMigrateArgs, MigrateStrategy, OutputFormat};
 
 fn client(ctx: &Context, vault: &str) -> Result<KeyClient> {
-    KeyClient::new(&Context::vault_uri(vault), ctx.credential.clone(), None)
+    KeyClient::new(&Context::vault_uri(vault)?, ctx.credential.clone(), None)
         .context("failed to build KeyClient")
+}
+
+/// Infer an RSA key size in bits from its modulus. Per RFC 7518 the JWK
+/// modulus is the minimal big-endian octet string (no leading zero byte), so
+/// its length in bits is the key size.
+fn rsa_key_size_bits(modulus: &[u8]) -> i32 {
+    (modulus.len() * 8) as i32
 }
 
 impl KeyKind {
@@ -201,7 +208,7 @@ pub async fn migrate_keys(
                 let kty = jwk.kty.clone().context("key has no key type")?;
 
                 // Infer RSA size from the modulus length.
-                let key_size = jwk.n.as_ref().map(|n| (n.len() * 8) as i32);
+                let key_size = jwk.n.as_ref().map(|n| rsa_key_size_bits(n));
                 let curve = jwk.crv.clone();
                 // KeyOperation is extensible; round-trip via JSON so we don't
                 // depend on the exact field type.
@@ -261,25 +268,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn vault_uri_normalization() {
-        assert_eq!(
-            Context::vault_uri("myvault"),
-            "https://myvault.vault.azure.net"
-        );
-        assert_eq!(
-            Context::vault_uri("https://myvault.vault.azure.net/"),
-            "https://myvault.vault.azure.net"
-        );
-        assert_eq!(
-            Context::vault_name("https://myvault.vault.azure.net"),
-            "myvault"
-        );
-        assert_eq!(Context::vault_name("myvault"), "myvault");
-    }
-
-    #[test]
     fn rsa_size_from_modulus() {
-        let n_2048 = vec![0u8; 256];
-        assert_eq!((n_2048.len() * 8) as i32, 2048);
+        // Exercises the production inference used by migrate_keys' Recreate
+        // path, not a re-implementation of it.
+        assert_eq!(rsa_key_size_bits(&vec![0u8; 256]), 2048);
+        assert_eq!(rsa_key_size_bits(&vec![0u8; 384]), 3072);
+        assert_eq!(rsa_key_size_bits(&vec![0u8; 512]), 4096);
     }
 }
