@@ -12,7 +12,11 @@ Claude Code reads this file at the start of every session in this repo.
 
 ## Releases
 
-This is a binary crate (`publish = false`), so release-plz does **not**
+This is a binary crate released via release-plz in `publish = false` mode.
+That flag must live **only in `release-plz.toml`** — do NOT add
+`publish = false` to `Cargo.toml`: release-plz's `is_publishable()` reads the
+cargo metadata field and silently drops the package from the release set
+("nothing to release"). In this mode release-plz does **not**
 auto-bump the version from conventional commits. To cut a release: bump the
 version in `Cargo.toml` (and `Cargo.lock` via `cargo update -p akvutil`),
 update `CHANGELOG.md` if desired, and commit `chore: release vX.Y.Z` to
