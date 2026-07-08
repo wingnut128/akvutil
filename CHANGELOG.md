@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] - 2026-07-08
+
+### Security
+
+- Reject a `--vault` URI whose host is not a known Key Vault / Managed HSM
+  domain, so the data-plane token (and, during `key migrate`, exported key
+  backups) can no longer be sent to an arbitrary host
+- Fix KQL escaping in `search` (escape backslashes, not just quotes) so a
+  crafted vault name or query cannot break out of the query string
+- Percent-encode subscription, resource group, and vault name in ARM
+  request URLs
+
+### Fixed
+
+- `vault migrate` now waits for a newly-created vault's data plane (DNS and
+  RBAC role propagation) before migrating keys, instead of racing it into a
+  spurious 403
+- `search usage` no longer matches unrelated vaults whose name is a suffix
+  (e.g. `foo` matched `barfoo.vault.azure.net`)
+- ARM responses with non-JSON error bodies (gateway 502/503, empty) surface
+  the real response instead of "no error detail"; ARM and Resource Graph
+  requests retry on 429/5xx honoring `Retry-After`
+
 ## [0.1.0] - 2026-07-08
 
 ### Added
