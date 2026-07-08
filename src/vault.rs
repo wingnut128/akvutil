@@ -123,11 +123,11 @@ pub async fn migrate(ctx: &Context, args: &VaultMigrateArgs, fmt: OutputFormat) 
             "created vault '{}' ({}, sku {})",
             args.target, target_location, target_sku
         ));
-        log.push(
-            "NOTE: grant yourself a data-plane role on the new vault (e.g. 'Key Vault Crypto \
-             Officer') before key operations if RBAC is enabled."
-                .to_string(),
-        );
+        // A freshly-created vault isn't immediately usable (DNS + RBAC role
+        // propagation), so wait for its data plane before migrating keys rather
+        // than racing it into a spurious 403.
+        keys::wait_until_ready(ctx, &args.target).await?;
+        log.push("target vault is ready for key operations".to_string());
     }
 
     // 2. Migrate keys.

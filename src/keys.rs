@@ -1,6 +1,8 @@
 //! Key operations against the Key Vault data plane
 //! (azure_security_keyvault_keys 1.0).
 
+use std::time::Duration;
+
 use anyhow::{Context as _, Result};
 use azure_security_keyvault_keys::{
     models::{CreateKeyParameters, CurveName, KeyType, RestoreKeyParameters},
@@ -8,6 +10,7 @@ use azure_security_keyvault_keys::{
 };
 use futures::TryStreamExt;
 use serde_json::json;
+use tokio::time::sleep;
 
 use crate::auth::Context;
 use crate::output;
@@ -16,6 +19,46 @@ use crate::{Curve, KeyCreateArgs, KeyKind, KeyMigrateArgs, MigrateStrategy, Outp
 fn client(ctx: &Context, vault: &str) -> Result<KeyClient> {
     KeyClient::new(&Context::vault_uri(vault)?, ctx.credential.clone(), None)
         .context("failed to build KeyClient")
+}
+
+/// Poll a vault's data plane until a request succeeds. A just-created vault is
+/// not immediately usable: its DNS name and (with RBAC) the caller's role
+/// assignment take time to propagate, so the first key operation can otherwise
+/// fail with a spurious 403 or name-resolution error. A successful list — even
+/// of an empty vault — proves both DNS and data-plane authorization are live.
+pub async fn wait_until_ready(ctx: &Context, vault: &str) -> Result<()> {
+    const TIMEOUT: Duration = Duration::from_secs(180);
+    const MAX_BACKOFF: Duration = Duration::from_secs(15);
+
+    let client = client(ctx, vault)?;
+    let mut waited = Duration::ZERO;
+    let mut backoff = Duration::from_secs(2);
+    loop {
+        let probe = async {
+            client.list_key_properties(None)?.try_next().await?;
+            Ok::<(), anyhow::Error>(())
+        }
+        .await;
+        match probe {
+            Ok(()) => return Ok(()),
+            Err(e) if waited >= TIMEOUT => {
+                return Err(e).with_context(|| {
+                    format!(
+                        "target vault '{}' still not reachable after {}s; if it uses RBAC, \
+                         grant yourself a data-plane role (e.g. 'Key Vault Crypto Officer') \
+                         and re-run",
+                        Context::vault_name(vault),
+                        TIMEOUT.as_secs()
+                    )
+                });
+            }
+            Err(_) => {
+                sleep(backoff).await;
+                waited += backoff;
+                backoff = (backoff * 2).min(MAX_BACKOFF);
+            }
+        }
+    }
 }
 
 /// Infer an RSA key size in bits from its modulus. Per RFC 7518 the JWK
