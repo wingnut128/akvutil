@@ -5,7 +5,6 @@ edition = "2021"
 rust-version = "1.88"
 description = "Azure Key Vault utility: create/migrate vaults and keys, discover resources that use them"
 license = "MIT"
-publish = false
 
 [dependencies]
 # Azure SDK for Rust (GA 1.0, verified on crates.io 2026-07)
