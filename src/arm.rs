@@ -5,7 +5,10 @@
 //! Resource Graph queries go straight to the ARM REST API using tokens from
 //! `azure_identity`.
 
+use std::time::Duration;
+
 use anyhow::{bail, Context as _, Result};
+use percent_encoding::{utf8_percent_encode, AsciiSet, NON_ALPHANUMERIC};
 use serde_json::{json, Value};
 
 use crate::auth::Context;
@@ -14,6 +17,24 @@ const ARM: &str = "https://management.azure.com";
 const VAULT_API: &str = "2023-07-01";
 const GRAPH_API: &str = "2022-10-01";
 const SUB_API: &str = "2022-12-01";
+
+/// Max retries for throttled / transient ARM responses.
+const MAX_RETRIES: u32 = 5;
+
+/// Characters allowed unescaped in a single ARM URL path segment. ARM resource
+/// names permit a few punctuation characters, so keep them literal and encode
+/// everything else — critically `/`, `?`, `#`, `%` — so an attacker-influenced
+/// name cannot inject extra path or query structure into the request.
+const SEGMENT: &AsciiSet = &NON_ALPHANUMERIC
+    .remove(b'-')
+    .remove(b'_')
+    .remove(b'.')
+    .remove(b'(')
+    .remove(b')');
+
+fn seg(s: &str) -> String {
+    utf8_percent_encode(s, SEGMENT).to_string()
+}
 
 pub struct VaultSpec<'a> {
     pub name: &'a str,
@@ -28,29 +49,65 @@ pub struct VaultSpec<'a> {
 
 async fn check(resp: reqwest::Response) -> Result<Value> {
     let status = resp.status();
-    let body: Value = resp.json().await.unwrap_or(Value::Null);
+    // Read the body as text first: ARM error responses are not always JSON
+    // (gateway 502/503 pages, auth challenges, empty bodies), and discarding
+    // them hides the real cause behind "no error detail".
+    let text = resp.text().await.unwrap_or_default();
     if !status.is_success() {
-        let msg = body
-            .pointer("/error/message")
-            .and_then(Value::as_str)
-            .unwrap_or("no error detail");
+        let msg = serde_json::from_str::<Value>(&text)
+            .ok()
+            .and_then(|b| {
+                b.pointer("/error/message")
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+            })
+            .unwrap_or_else(|| {
+                let t = text.trim();
+                if t.is_empty() {
+                    "no error detail".to_string()
+                } else {
+                    t.chars().take(500).collect()
+                }
+            });
         bail!("ARM request failed ({status}): {msg}");
     }
-    Ok(body)
+    Ok(serde_json::from_str(&text).unwrap_or(Value::Null))
+}
+
+/// Attach the ARM bearer token, send, and retry on throttling (429) and
+/// transient server errors, honoring `Retry-After` when present. Returns the
+/// parsed JSON body on success.
+async fn send(ctx: &Context, req: reqwest::RequestBuilder) -> Result<Value> {
+    let req = req.bearer_auth(ctx.arm_token().await?);
+    let mut attempt = 0;
+    loop {
+        let this = req
+            .try_clone()
+            .context("ARM request body is not cloneable for retry")?;
+        let resp = this.send().await?;
+        let status = resp.status();
+        let retryable = status.as_u16() == 429 || status.is_server_error();
+        if retryable && attempt < MAX_RETRIES {
+            let wait = resp
+                .headers()
+                .get("retry-after")
+                .and_then(|v| v.to_str().ok())
+                .and_then(|s| s.parse::<u64>().ok())
+                .unwrap_or(1u64 << attempt) // exponential backoff fallback
+                .min(30);
+            tokio::time::sleep(Duration::from_secs(wait)).await;
+            attempt += 1;
+            continue;
+        }
+        return check(resp).await;
+    }
 }
 
 /// The tenant that owns a subscription (needed for vault creation).
 pub async fn tenant_id(ctx: &Context) -> Result<String> {
-    let sub = ctx.subscription()?;
+    let sub = seg(ctx.subscription()?);
     let url = format!("{ARM}/subscriptions/{sub}?api-version={SUB_API}");
-    let body = check(
-        ctx.http
-            .get(&url)
-            .bearer_auth(ctx.arm_token().await?)
-            .send()
-            .await?,
-    )
-    .await?;
+    let body = send(ctx, ctx.http.get(&url)).await?;
     body.get("tenantId")
         .and_then(Value::as_str)
         .map(String::from)
@@ -58,18 +115,13 @@ pub async fn tenant_id(ctx: &Context) -> Result<String> {
 }
 
 pub async fn get_vault(ctx: &Context, name: &str, resource_group: &str) -> Result<Value> {
-    let sub = ctx.subscription()?;
+    let sub = seg(ctx.subscription()?);
+    let rg = seg(resource_group);
+    let name = seg(name);
     let url = format!(
-        "{ARM}/subscriptions/{sub}/resourceGroups/{resource_group}/providers/Microsoft.KeyVault/vaults/{name}?api-version={VAULT_API}"
+        "{ARM}/subscriptions/{sub}/resourceGroups/{rg}/providers/Microsoft.KeyVault/vaults/{name}?api-version={VAULT_API}"
     );
-    check(
-        ctx.http
-            .get(&url)
-            .bearer_auth(ctx.arm_token().await?)
-            .send()
-            .await?,
-    )
-    .await
+    send(ctx, ctx.http.get(&url)).await
 }
 
 pub async fn create_vault(ctx: &Context, spec: &VaultSpec<'_>) -> Result<Value> {
@@ -104,18 +156,11 @@ pub async fn create_vault(ctx: &Context, spec: &VaultSpec<'_>) -> Result<Value> 
 
     let url = format!(
         "{ARM}/subscriptions/{sub}/resourceGroups/{rg}/providers/Microsoft.KeyVault/vaults/{name}?api-version={VAULT_API}",
-        rg = spec.resource_group,
-        name = spec.name,
+        sub = seg(sub),
+        rg = seg(spec.resource_group),
+        name = seg(spec.name),
     );
-    check(
-        ctx.http
-            .put(&url)
-            .bearer_auth(ctx.arm_token().await?)
-            .json(&body)
-            .send()
-            .await?,
-    )
-    .await
+    send(ctx, ctx.http.put(&url).json(&body)).await
 }
 
 /// Run a KQL query against Azure Resource Graph. Handles paging via $skipToken.
@@ -136,15 +181,7 @@ pub async fn graph_query(ctx: &Context, query: &str) -> Result<Vec<Value>> {
             body["subscriptions"] = json!([sub]);
         }
 
-        let resp = check(
-            ctx.http
-                .post(&url)
-                .bearer_auth(ctx.arm_token().await?)
-                .json(&body)
-                .send()
-                .await?,
-        )
-        .await?;
+        let resp = send(ctx, ctx.http.post(&url).json(&body)).await?;
 
         if let Some(data) = resp.get("data").and_then(Value::as_array) {
             rows.extend(data.iter().cloned());

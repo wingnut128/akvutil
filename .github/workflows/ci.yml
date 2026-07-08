@@ -13,10 +13,18 @@ jobs:
     name: Lint and test
     runs-on: ubuntu-latest
     steps:
-      - name: Harden the runner (Audit all outbound calls)
+      - name: Harden the runner (block egress)
         uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
         with:
-          egress-policy: audit
+          egress-policy: block
+          allowed-endpoints: >
+            github.com:443
+            api.github.com:443
+            codeload.github.com:443
+            objects.githubusercontent.com:443
+            static.rust-lang.org:443
+            index.crates.io:443
+            static.crates.io:443
 
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
@@ -43,3 +51,47 @@ jobs:
 
       - name: Test
         run: cargo test
+
+  audit:
+    name: Dependency audit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Harden the runner (block egress)
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: block
+          # Same as test, plus the RustSec advisory DB is cloned from GitHub.
+          allowed-endpoints: >
+            github.com:443
+            api.github.com:443
+            codeload.github.com:443
+            objects.githubusercontent.com:443
+            static.rust-lang.org:443
+            index.crates.io:443
+            static.crates.io:443
+
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Install Rust stable
+        run: |
+          rustup update stable
+          rustup default stable
+
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/
+            ~/.cargo/git/
+            ~/.cargo/bin/
+          key: audit-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: audit-
+
+      - name: Install cargo-audit
+        # Skip the build when a cached ~/.cargo/bin/cargo-audit was restored;
+        # `cargo install` errors ("binary already exists") on a warm cache.
+        run: command -v cargo-audit >/dev/null 2>&1 || cargo install cargo-audit --locked
+
+      # Fail the build on any crate with a known RUSTSEC advisory so a
+      # vulnerable dependency cannot be compiled into a released binary.
+      - name: Audit dependencies
+        run: cargo audit

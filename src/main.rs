@@ -265,3 +265,22 @@ async fn main() -> Result<()> {
         },
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::parse_tag;
+
+    #[test]
+    fn parses_key_value() {
+        assert_eq!(parse_tag("env=prod"), Ok(("env".into(), "prod".into())));
+        // Only the first '=' splits, so values may contain '='.
+        assert_eq!(parse_tag("conn=a=b=c"), Ok(("conn".into(), "a=b=c".into())));
+        // Empty value is allowed; empty key is preserved as given.
+        assert_eq!(parse_tag("k="), Ok(("k".into(), String::new())));
+    }
+
+    #[test]
+    fn rejects_missing_separator() {
+        assert!(parse_tag("novalue").is_err());
+    }
+}

@@ -58,3 +58,18 @@ pub fn print_table(headers: &[&str], rows: &[Value], keys: &[&str]) {
         println!("{}", line(row));
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn display_renders_each_json_kind() {
+        assert_eq!(display(&Value::Null), "-");
+        // Strings render bare, without surrounding quotes.
+        assert_eq!(display(&json!("hello")), "hello");
+        assert_eq!(display(&json!(true)), "true");
+        assert_eq!(display(&json!(42)), "42");
+    }
+}

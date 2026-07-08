@@ -10,8 +10,13 @@ use crate::auth::Context;
 use crate::output;
 use crate::OutputFormat;
 
+/// Escape a value for embedding in a single-quoted KQL string literal. KQL
+/// uses backslash escaping, so the backslash must be escaped *before* the
+/// quote — otherwise an input like `\'` collapses to `\\'`, which KQL reads as
+/// an escaped backslash followed by a closing quote, breaking out of the
+/// literal and allowing query injection.
 fn kql_escape(s: &str) -> String {
-    s.replace('\'', "\\'")
+    s.replace('\\', "\\\\").replace('\'', "\\'")
 }
 
 pub async fn vaults(ctx: &Context, query: Option<&str>, fmt: OutputFormat) -> Result<()> {
@@ -59,10 +64,12 @@ pub async fn find_vault_id(ctx: &Context, name: &str) -> Result<Option<String>> 
 /// Resources whose properties reference the vault by URI or resource ID.
 pub async fn find_usage(ctx: &Context, vault: &str) -> Result<Vec<Value>> {
     let name = Context::vault_name(vault);
-    let uri_host = format!("{}.vault.azure.net", kql_escape(&name));
+    // Match on the full scheme-qualified host so that vault `foo` does not also
+    // match references to `barfoo.vault.azure.net`.
+    let uri = format!("https://{}.vault.azure.net", kql_escape(&name));
     let vault_id = find_vault_id(ctx, &name).await?;
 
-    let mut predicate = format!("tostring(properties) contains '{uri_host}'");
+    let mut predicate = format!("tostring(properties) contains '{uri}'");
     if let Some(id) = &vault_id {
         predicate.push_str(&format!(
             " or tostring(properties) contains '{}'",
@@ -106,4 +113,19 @@ pub async fn usage(ctx: &Context, vault: &str, fmt: OutputFormat) -> Result<()> 
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::kql_escape;
+
+    #[test]
+    fn escapes_backslash_before_quote() {
+        // The injection payload `\'` must not collapse into a literal-closing
+        // sequence: backslash is doubled, then the quote is escaped.
+        assert_eq!(kql_escape(r"\'"), r"\\\'");
+        assert_eq!(kql_escape("o'brien"), r"o\'brien");
+        assert_eq!(kql_escape(r"c:\path"), r"c:\\path");
+        assert_eq!(kql_escape("plain"), "plain");
+    }
 }

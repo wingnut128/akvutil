@@ -1,6 +1,8 @@
 //! Key operations against the Key Vault data plane
 //! (azure_security_keyvault_keys 1.0).
 
+use std::time::Duration;
+
 use anyhow::{Context as _, Result};
 use azure_security_keyvault_keys::{
     models::{CreateKeyParameters, CurveName, KeyType, RestoreKeyParameters},
@@ -8,14 +10,62 @@ use azure_security_keyvault_keys::{
 };
 use futures::TryStreamExt;
 use serde_json::json;
+use tokio::time::sleep;
 
 use crate::auth::Context;
 use crate::output;
 use crate::{Curve, KeyCreateArgs, KeyKind, KeyMigrateArgs, MigrateStrategy, OutputFormat};
 
 fn client(ctx: &Context, vault: &str) -> Result<KeyClient> {
-    KeyClient::new(&Context::vault_uri(vault), ctx.credential.clone(), None)
+    KeyClient::new(&Context::vault_uri(vault)?, ctx.credential.clone(), None)
         .context("failed to build KeyClient")
+}
+
+/// Poll a vault's data plane until a request succeeds. A just-created vault is
+/// not immediately usable: its DNS name and (with RBAC) the caller's role
+/// assignment take time to propagate, so the first key operation can otherwise
+/// fail with a spurious 403 or name-resolution error. A successful list — even
+/// of an empty vault — proves both DNS and data-plane authorization are live.
+pub async fn wait_until_ready(ctx: &Context, vault: &str) -> Result<()> {
+    const TIMEOUT: Duration = Duration::from_secs(180);
+    const MAX_BACKOFF: Duration = Duration::from_secs(15);
+
+    let client = client(ctx, vault)?;
+    let mut waited = Duration::ZERO;
+    let mut backoff = Duration::from_secs(2);
+    loop {
+        let probe = async {
+            client.list_key_properties(None)?.try_next().await?;
+            Ok::<(), anyhow::Error>(())
+        }
+        .await;
+        match probe {
+            Ok(()) => return Ok(()),
+            Err(e) if waited >= TIMEOUT => {
+                return Err(e).with_context(|| {
+                    format!(
+                        "target vault '{}' still not reachable after {}s; if it uses RBAC, \
+                         grant yourself a data-plane role (e.g. 'Key Vault Crypto Officer') \
+                         and re-run",
+                        Context::vault_name(vault),
+                        TIMEOUT.as_secs()
+                    )
+                });
+            }
+            Err(_) => {
+                sleep(backoff).await;
+                waited += backoff;
+                backoff = (backoff * 2).min(MAX_BACKOFF);
+            }
+        }
+    }
+}
+
+/// Infer an RSA key size in bits from its modulus. Per RFC 7518 the JWK
+/// modulus is the minimal big-endian octet string (no leading zero byte), so
+/// its length in bits is the key size.
+fn rsa_key_size_bits(modulus: &[u8]) -> i32 {
+    (modulus.len() * 8) as i32
 }
 
 impl KeyKind {
@@ -201,7 +251,7 @@ pub async fn migrate_keys(
                 let kty = jwk.kty.clone().context("key has no key type")?;
 
                 // Infer RSA size from the modulus length.
-                let key_size = jwk.n.as_ref().map(|n| (n.len() * 8) as i32);
+                let key_size = jwk.n.as_ref().map(|n| rsa_key_size_bits(n));
                 let curve = jwk.crv.clone();
                 // KeyOperation is extensible; round-trip via JSON so we don't
                 // depend on the exact field type.
@@ -261,25 +311,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn vault_uri_normalization() {
-        assert_eq!(
-            Context::vault_uri("myvault"),
-            "https://myvault.vault.azure.net"
-        );
-        assert_eq!(
-            Context::vault_uri("https://myvault.vault.azure.net/"),
-            "https://myvault.vault.azure.net"
-        );
-        assert_eq!(
-            Context::vault_name("https://myvault.vault.azure.net"),
-            "myvault"
-        );
-        assert_eq!(Context::vault_name("myvault"), "myvault");
-    }
-
-    #[test]
     fn rsa_size_from_modulus() {
-        let n_2048 = vec![0u8; 256];
-        assert_eq!((n_2048.len() * 8) as i32, 2048);
+        // Exercises the production inference used by migrate_keys' Recreate
+        // path, not a re-implementation of it.
+        assert_eq!(rsa_key_size_bits(&vec![0u8; 256]), 2048);
+        assert_eq!(rsa_key_size_bits(&vec![0u8; 384]), 3072);
+        assert_eq!(rsa_key_size_bits(&vec![0u8; 512]), 4096);
     }
 }

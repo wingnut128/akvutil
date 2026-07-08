@@ -23,6 +23,10 @@ jobs:
         with:
           fetch-depth: 0
           token: ${{ secrets.RELEASE_PLZ_TOKEN }}
+          # Don't write the PAT into .git/config where later steps (rustup,
+          # release-plz) could read it; release-plz authenticates via the
+          # GITHUB_TOKEN env below instead.
+          persist-credentials: false
 
       - name: Install Rust stable
         run: |
@@ -55,6 +59,10 @@ jobs:
         with:
           fetch-depth: 0
           token: ${{ secrets.RELEASE_PLZ_TOKEN }}
+          # Don't write the PAT into .git/config where later steps (rustup,
+          # release-plz) could read it; release-plz authenticates via the
+          # GITHUB_TOKEN env below instead.
+          persist-credentials: false
 
       - name: Install Rust stable
         run: |
