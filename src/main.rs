@@ -245,9 +245,10 @@ async fn main() -> Result<()> {
 
     // arg_required_else_help covers the bare invocation; this covers global
     // flags given without a subcommand (e.g. `akvutil --output json`).
+    // Help goes to stderr to match clap's arg_required_else_help error path.
     let Some(command) = cli.command else {
         use clap::CommandFactory as _;
-        Cli::command().print_help()?;
+        eprint!("{}", Cli::command().render_help());
         std::process::exit(2);
     };
 
