@@ -3,9 +3,12 @@
 
 use std::time::Duration;
 
-use anyhow::{Context as _, Result};
+use anyhow::{bail, Context as _, Result};
 use azure_security_keyvault_keys::{
-    models::{CreateKeyParameters, CurveName, KeyType, RestoreKeyParameters},
+    models::{
+        CreateKeyParameters, CurveName, KeyAttributes, KeyRotationPolicy, KeyRotationPolicyAction,
+        KeyType, LifetimeAction, LifetimeActionTrigger, LifetimeActionType, RestoreKeyParameters,
+    },
     KeyClient, ResourceExt as _,
 };
 use futures::TryStreamExt;
@@ -14,6 +17,7 @@ use tokio::time::sleep;
 
 use crate::auth::Context;
 use crate::output;
+use crate::timespec;
 use crate::{Curve, KeyCreateArgs, KeyKind, KeyMigrateArgs, MigrateStrategy, OutputFormat};
 
 fn client(ctx: &Context, vault: &str) -> Result<KeyClient> {
@@ -92,8 +96,118 @@ impl Curve {
     }
 }
 
+/// Overlay rotation-policy values onto `policy`. Pass
+/// `KeyRotationPolicy::default()` to build a policy from scratch. The
+/// service requires an expiry time whenever a Notify action exists, so that
+/// combination is rejected here with a actionable message instead of a 400.
+pub fn merge_rotation_policy(
+    mut policy: KeyRotationPolicy,
+    rotate_after: Option<&str>,
+    notify_before: Option<&str>,
+    policy_expiry: Option<&str>,
+) -> Result<KeyRotationPolicy> {
+    fn upsert(
+        actions: &mut Vec<LifetimeAction>,
+        kind: KeyRotationPolicyAction,
+        trigger: LifetimeActionTrigger,
+    ) {
+        let action = LifetimeAction {
+            action: Some(LifetimeActionType {
+                type_prop: Some(kind),
+            }),
+            trigger: Some(trigger),
+        };
+        let existing = actions
+            .iter_mut()
+            .find(|a| a.action.as_ref().and_then(|t| t.type_prop) == Some(kind));
+        match existing {
+            Some(slot) => *slot = action,
+            None => actions.push(action),
+        }
+    }
+
+    let mut actions = policy.lifetime_actions.take().unwrap_or_default();
+    if let Some(d) = rotate_after {
+        upsert(
+            &mut actions,
+            KeyRotationPolicyAction::Rotate,
+            LifetimeActionTrigger {
+                time_after_create: Some(timespec::policy_duration(d)?),
+                time_before_expiry: None,
+            },
+        );
+    }
+    if let Some(d) = notify_before {
+        upsert(
+            &mut actions,
+            KeyRotationPolicyAction::Notify,
+            LifetimeActionTrigger {
+                time_after_create: None,
+                time_before_expiry: Some(timespec::policy_duration(d)?),
+            },
+        );
+    }
+    if let Some(d) = policy_expiry {
+        policy
+            .attributes
+            .get_or_insert_with(Default::default)
+            .expiry_time = Some(timespec::policy_duration(d)?);
+    }
+
+    let has_expiry = policy
+        .attributes
+        .as_ref()
+        .and_then(|a| a.expiry_time.as_ref())
+        .is_some();
+    let has_notify = actions.iter().any(|a| {
+        a.action.as_ref().and_then(|t| t.type_prop) == Some(KeyRotationPolicyAction::Notify)
+    });
+    if has_notify && !has_expiry {
+        bail!("a notify action requires an expiry time: set --policy-expiry");
+    }
+
+    policy.lifetime_actions = Some(actions);
+    Ok(policy)
+}
+
 pub async fn create(ctx: &Context, args: &KeyCreateArgs, fmt: OutputFormat) -> Result<()> {
     let client = client(ctx, &args.vault)?;
+
+    // Fail on bad policy flags before creating anything.
+    let policy = if args.rotate_after.is_some()
+        || args.notify_before.is_some()
+        || args.policy_expiry.is_some()
+    {
+        Some(merge_rotation_policy(
+            KeyRotationPolicy::default(),
+            args.rotate_after.as_deref(),
+            args.notify_before.as_deref(),
+            args.policy_expiry.as_deref(),
+        )?)
+    } else {
+        None
+    };
+
+    let now = azure_core::time::OffsetDateTime::now_utc();
+    let attributes = KeyAttributes {
+        enabled: args.enabled,
+        expires: args
+            .expires
+            .as_deref()
+            .map(|s| timespec::timestamp(s, now))
+            .transpose()?,
+        not_before: args
+            .not_before
+            .as_deref()
+            .map(|s| timespec::timestamp(s, now))
+            .transpose()?,
+        exportable: args.exportable.then_some(true),
+        ..Default::default()
+    };
+    let has_attributes = args.enabled.is_some()
+        || args.expires.is_some()
+        || args.not_before.is_some()
+        || args.exportable;
 
     let params = CreateKeyParameters {
         kty: Some(args.kty.to_key_type()),
@@ -106,6 +220,12 @@ pub async fn create(ctx: &Context, args: &KeyCreateArgs, fmt: OutputFormat) -> R
             // convert the user's strings.
             Some(serde_json::from_value(json!(args.ops))?)
         },
+        key_attributes: has_attributes.then_some(attributes),
+        tags: if args.tag.is_empty() {
+            None
+        } else {
+            Some(args.tag.iter().cloned().collect())
+        },
         ..Default::default()
     };
 
@@ -114,6 +234,18 @@ pub async fn create(ctx: &Context, args: &KeyCreateArgs, fmt: OutputFormat) -> R
         .await
         .with_context(|| format!("failed to create key '{}'", args.name))?
         .into_model()?;
+
+    if let Some(policy) = policy {
+        client
+            .update_key_rotation_policy(&args.name, policy.try_into()?, None)
+            .await
+            .with_context(|| {
+                format!(
+                    "key '{}' was created, but setting its rotation policy failed",
+                    args.name
+                )
+            })?;
+    }
 
     let kid = key
         .key
@@ -317,5 +449,62 @@ mod tests {
         assert_eq!(rsa_key_size_bits(&vec![0u8; 256]), 2048);
         assert_eq!(rsa_key_size_bits(&vec![0u8; 384]), 3072);
         assert_eq!(rsa_key_size_bits(&vec![0u8; 512]), 4096);
+    }
+
+    use azure_security_keyvault_keys::models::KeyRotationPolicy;
+
+    #[test]
+    fn builds_policy_from_scratch() {
+        let p = merge_rotation_policy(
+            KeyRotationPolicy::default(),
+            Some("90d"),
+            Some("30d"),
+            Some("2y"),
+        )
+        .unwrap();
+        assert_eq!(
+            serde_json::to_value(&p).unwrap(),
+            json!({
+                "attributes": { "expiryTime": "P2Y" },
+                "lifetimeActions": [
+                    { "action": { "type": "Rotate" }, "trigger": { "timeAfterCreate": "P90D" } },
+                    { "action": { "type": "Notify" }, "trigger": { "timeBeforeExpiry": "P30D" } },
+                ],
+            })
+        );
+    }
+
+    #[test]
+    fn overlay_replaces_only_given_actions() {
+        let existing: KeyRotationPolicy = serde_json::from_value(json!({
+            "attributes": { "expiryTime": "P1Y" },
+            "lifetimeActions": [
+                { "action": { "type": "Rotate" }, "trigger": { "timeAfterCreate": "P30D" } },
+            ],
+        }))
+        .unwrap();
+        let p = merge_rotation_policy(existing, Some("90d"), None, None).unwrap();
+        let v = serde_json::to_value(&p).unwrap();
+        // Rotate trigger updated, expiry preserved, no Notify action invented.
+        assert_eq!(v["attributes"]["expiryTime"], "P1Y");
+        assert_eq!(
+            v["lifetimeActions"][0]["trigger"]["timeAfterCreate"],
+            "P90D"
+        );
+        assert_eq!(v["lifetimeActions"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn notify_without_expiry_is_rejected() {
+        let err = merge_rotation_policy(KeyRotationPolicy::default(), None, Some("30d"), None)
+            .unwrap_err();
+        assert!(err.to_string().contains("--policy-expiry"));
+    }
+
+    #[test]
+    fn bad_duration_propagates() {
+        assert!(
+            merge_rotation_policy(KeyRotationPolicy::default(), Some("90x"), None, None).is_err()
+        );
     }
 }

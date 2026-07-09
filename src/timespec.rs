@@ -17,7 +17,6 @@ fn split_shorthand(s: &str) -> Option<(u32, char)> {
 /// Parse a policy duration: "<n>d" (days), "<n>m" (months), "<n>y" (years),
 /// or a raw ISO-8601 duration like "P90D" (passed through uppercased).
 /// Key Vault policies have no sub-day granularity.
-#[allow(dead_code)] // used by key create/rotation tasks
 pub fn policy_duration(s: &str) -> Result<String> {
     let t = s.trim();
     if t.len() > 1 && t.to_ascii_uppercase().starts_with('P') {
@@ -36,7 +35,6 @@ pub fn policy_duration(s: &str) -> Result<String> {
 
 /// Parse a timestamp: RFC-3339 datetime, bare date (midnight UTC), or
 /// "+<n>d|m|y" relative to `now` (months ≈ 30 days, years ≈ 365 days).
-#[allow(dead_code)] // used by key create/rotation tasks
 pub fn timestamp(s: &str, now: OffsetDateTime) -> Result<OffsetDateTime> {
     let t = s.trim();
     if let Some(rest) = t.strip_prefix('+') {

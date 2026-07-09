@@ -265,6 +265,30 @@ pub struct KeyCreateArgs {
     /// Permitted operations (comma-separated): encrypt,decrypt,sign,verify,wrapKey,unwrapKey
     #[arg(long, value_delimiter = ',')]
     pub ops: Vec<String>,
+    /// Enable or disable the key (default: service default, enabled)
+    #[arg(long, action = clap::ArgAction::Set)]
+    pub enabled: Option<bool>,
+    /// Expiry: RFC-3339 date/datetime, or +<n>d|m|y from now (e.g. 2027-01-01, +2y)
+    #[arg(long)]
+    pub expires: Option<String>,
+    /// Not-before: RFC-3339 date/datetime, or +<n>d|m|y from now
+    #[arg(long = "not-before")]
+    pub not_before: Option<String>,
+    /// Mark the key exportable (requires a release policy and premium/HSM)
+    #[arg(long)]
+    pub exportable: bool,
+    /// Tags as key=value pairs
+    #[arg(long, value_parser = parse_tag)]
+    pub tag: Vec<(String, String)>,
+    /// Auto-rotate this long after creation (e.g. 90d, P90D)
+    #[arg(long = "rotate-after")]
+    pub rotate_after: Option<String>,
+    /// Notify via Event Grid this long before expiry (requires --policy-expiry)
+    #[arg(long = "notify-before")]
+    pub notify_before: Option<String>,
+    /// Expiry applied to each newly rotated key version (e.g. 2y, P2Y)
+    #[arg(long = "policy-expiry")]
+    pub policy_expiry: Option<String>,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, ValueEnum)]
