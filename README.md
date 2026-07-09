@@ -51,6 +51,8 @@ akvutil key migrate --source-vault kv-old --target-vault kv-new \
 
 Migration strategies: `recreate` builds same-shape keys (type, size, curve, ops) in the target — new key material, so consumers must be repointed and data re-wrapped. `backup-restore` preserves key material and versions but Azure only allows it within the same geography and subscription. Octet (oct/oct-HSM) keys never expose material, so `recreate` uses the service default size for those.
 
+See [docs/runbooks](docs/runbooks/README.md) for tier-migration runbooks (standard ↔ premium, Managed HSM) including the viability matrix and which paths are one-way.
+
 ### Search
 
 ```
