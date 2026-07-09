@@ -3,6 +3,7 @@ mod auth;
 mod keys;
 mod output;
 mod search;
+mod timespec;
 mod vault;
 
 use anyhow::Result;
