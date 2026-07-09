@@ -183,6 +183,17 @@ pub async fn create_vault(ctx: &Context, spec: &VaultSpec<'_>) -> Result<Value> 
     send(ctx, ctx.http.put(&url).json(&body)).await
 }
 
+/// All locations available to the subscription, with paired-region metadata.
+pub async fn list_locations(ctx: &Context) -> Result<Vec<Value>> {
+    let sub = seg(ctx.subscription()?);
+    let url = format!("{ARM}/subscriptions/{sub}/locations?api-version={SUB_API}");
+    let body = send(ctx, ctx.http.get(&url)).await?;
+    body.get("value")
+        .and_then(Value::as_array)
+        .cloned()
+        .context("locations response missing value array")
+}
+
 /// Run a KQL query against Azure Resource Graph. Handles paging via $skipToken.
 pub async fn graph_query(ctx: &Context, query: &str) -> Result<Vec<Value>> {
     let url = format!("{ARM}/providers/Microsoft.ResourceGraph/resources?api-version={GRAPH_API}");
