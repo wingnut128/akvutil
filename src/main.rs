@@ -12,7 +12,8 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 #[command(
     name = "akvutil",
     version,
-    about = "Azure Key Vault utility: create/migrate vaults and keys, and find resources that use them"
+    about = "Azure Key Vault utility: create/migrate vaults and keys, and find resources that use them",
+    arg_required_else_help = true
 )]
 pub struct Cli {
     /// Azure subscription ID (falls back to $AZURE_SUBSCRIPTION_ID)
@@ -24,7 +25,7 @@ pub struct Cli {
     pub output: OutputFormat,
 
     #[command(subcommand)]
-    pub command: Command,
+    pub command: Option<Command>,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, ValueEnum)]
@@ -241,9 +242,18 @@ fn parse_tag(s: &str) -> Result<(String, String), String> {
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
+
+    // arg_required_else_help covers the bare invocation; this covers global
+    // flags given without a subcommand (e.g. `akvutil --output json`).
+    let Some(command) = cli.command else {
+        use clap::CommandFactory as _;
+        Cli::command().print_help()?;
+        std::process::exit(2);
+    };
+
     let ctx = auth::Context::new(cli.subscription.clone())?;
 
-    match cli.command {
+    match command {
         Command::Vault(cmd) => match cmd {
             VaultCommand::Create(args) => vault::create(&ctx, &args, cli.output).await,
             VaultCommand::Show {
@@ -282,5 +292,25 @@ mod tests {
     #[test]
     fn rejects_missing_separator() {
         assert!(parse_tag("novalue").is_err());
+    }
+
+    use clap::Parser as _;
+
+    #[test]
+    fn bare_invocation_shows_help() {
+        // An env-provided --subscription counts as "args present", which
+        // suppresses arg_required_else_help; clear it so the test is
+        // deterministic regardless of the local shell environment.
+        std::env::remove_var("AZURE_SUBSCRIPTION_ID");
+        // `unwrap_err()` would require `Cli: Debug`; match instead to avoid
+        // adding Debug derives across every CLI type.
+        let err = match super::Cli::try_parse_from(["akvutil"]) {
+            Err(err) => err,
+            Ok(_) => panic!("expected parse error on bare invocation"),
+        };
+        assert_eq!(
+            err.kind(),
+            clap::error::ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand
+        );
     }
 }
