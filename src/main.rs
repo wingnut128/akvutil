@@ -42,9 +42,8 @@ pub enum Command {
     /// Manage keys within a vault
     #[command(subcommand)]
     Key(KeyCommand),
-    /// Find vaults and resources that use them
-    #[command(subcommand)]
-    Search(SearchCommand),
+    /// Find resources by type and name, or find what uses a vault
+    Search(SearchArgs),
 }
 
 #[derive(Subcommand)]
@@ -143,7 +142,7 @@ pub enum MigrateStrategy {
     BackupRestore,
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, ValueEnum)]
 pub enum ResourceType {
     /// Key vaults (microsoft.keyvault/vaults)
     Keyvault,
@@ -156,7 +155,6 @@ pub enum ResourceType {
 }
 
 impl ResourceType {
-    #[allow(dead_code)] // used by the search CLI wired in the next task
     pub const ALL: [ResourceType; 4] = [
         ResourceType::Keyvault,
         ResourceType::Storage,
@@ -239,13 +237,23 @@ pub struct KeyMigrateArgs {
     pub dry_run: bool,
 }
 
+#[derive(Args)]
+#[command(args_conflicts_with_subcommands = true)]
+pub struct SearchArgs {
+    #[command(subcommand)]
+    pub command: Option<SearchCommand>,
+
+    /// Resource types to search (comma-separated or repeated; default: all)
+    #[arg(long = "type", value_enum, value_delimiter = ',')]
+    pub types: Vec<ResourceType>,
+
+    /// Name pattern: substring match, or use '*' wildcards (foo*, *foo, f*o)
+    #[arg(long)]
+    pub name: Option<String>,
+}
+
 #[derive(Subcommand)]
 pub enum SearchCommand {
-    /// Find key vaults across the subscription(s)
-    Vaults {
-        /// Substring to match against vault names (optional)
-        query: Option<String>,
-    },
     /// Find resources that use a vault (storage accounts, disk encryption
     /// sets, SQL servers, VMs, etc.)
     Usage {
@@ -290,11 +298,18 @@ async fn main() -> Result<()> {
             KeyCommand::List { vault } => keys::list(&ctx, &vault, cli.output).await,
             KeyCommand::Migrate(args) => keys::migrate(&ctx, &args, cli.output).await,
         },
-        Command::Search(cmd) => match cmd {
-            SearchCommand::Vaults { query } => {
-                search::vaults(&ctx, query.as_deref(), cli.output).await
+        Command::Search(args) => match args.command {
+            Some(SearchCommand::Usage { vault }) => search::usage(&ctx, &vault, cli.output).await,
+            None => {
+                let mut types = if args.types.is_empty() {
+                    ResourceType::ALL.to_vec()
+                } else {
+                    args.types
+                };
+                types.sort();
+                types.dedup();
+                search::resources(&ctx, &types, args.name.as_deref(), cli.output).await
             }
-            SearchCommand::Usage { vault } => search::usage(&ctx, &vault, cli.output).await,
         },
     }
 }
@@ -335,5 +350,40 @@ mod tests {
             err.kind(),
             clap::error::ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand
         );
+    }
+
+    #[test]
+    fn search_flags_parse() {
+        let cli = super::Cli::try_parse_from([
+            "akvutil",
+            "search",
+            "--type",
+            "keyvault,storage",
+            "--name",
+            "testfoo*",
+        ])
+        .unwrap();
+        let Some(super::Command::Search(args)) = cli.command else {
+            panic!("expected search command");
+        };
+        assert!(args.command.is_none());
+        assert_eq!(
+            args.types,
+            vec![super::ResourceType::Keyvault, super::ResourceType::Storage]
+        );
+        assert_eq!(args.name.as_deref(), Some("testfoo*"));
+    }
+
+    #[test]
+    fn search_usage_subcommand_still_parses() {
+        let cli = super::Cli::try_parse_from(["akvutil", "search", "usage", "--vault", "myvault"])
+            .unwrap();
+        let Some(super::Command::Search(args)) = cli.command else {
+            panic!("expected search command");
+        };
+        assert!(matches!(
+            args.command,
+            Some(super::SearchCommand::Usage { vault }) if vault == "myvault"
+        ));
     }
 }

@@ -22,7 +22,6 @@ fn kql_escape(s: &str) -> String {
 
 /// Escape regex metacharacters so a literal chunk of a wildcard pattern
 /// cannot alter the regex built around it.
-#[allow(dead_code)] // used by name_predicate
 fn regex_escape(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for c in s.chars() {
@@ -38,7 +37,6 @@ fn regex_escape(s: &str) -> String {
 /// No '*' means substring match; a single leading/trailing '*' anchors the
 /// match; anything else compiles to an anchored case-insensitive regex.
 /// KQL contains/startswith/endswith are already case-insensitive.
-#[allow(dead_code)] // used by build_search_query in the next task
 pub fn name_predicate(pattern: &str) -> String {
     let stars = pattern.matches('*').count();
     match stars {
@@ -63,7 +61,6 @@ pub fn name_predicate(pattern: &str) -> String {
 
 impl ResourceType {
     /// Source table + type filter for this resource type.
-    #[allow(dead_code)] // used by the search CLI wired in the next task
     fn branch(self) -> &'static str {
         match self {
             ResourceType::Keyvault => {
@@ -83,7 +80,6 @@ impl ResourceType {
 
     /// Common projection. Resource groups have no parent group, so they
     /// project their own name into the resourceGroup column.
-    #[allow(dead_code)] // used by the search CLI wired in the next task
     fn projection(self) -> &'static str {
         match self {
             ResourceType::Rg => {
@@ -96,7 +92,6 @@ impl ResourceType {
 
 /// One KQL query covering all requested types — a single Resource Graph
 /// call regardless of how many types are searched.
-#[allow(dead_code)] // used by the search CLI wired in the next task
 pub fn build_search_query(types: &[ResourceType], name: Option<&str>) -> String {
     let filter = name
         .map(|n| format!(" | where {}", name_predicate(n)))
@@ -113,29 +108,35 @@ pub fn build_search_query(types: &[ResourceType], name: Option<&str>) -> String 
     format!("{body} | order by type asc, name asc")
 }
 
-pub async fn vaults(ctx: &Context, query: Option<&str>, fmt: OutputFormat) -> Result<()> {
-    let filter = match query {
-        Some(q) => format!("| where name contains '{}'", kql_escape(q)),
-        None => String::new(),
-    };
-    let kql = format!(
-        "Resources \
-         | where type =~ 'microsoft.keyvault/vaults' {filter} \
-         | project name, resourceGroup, location, subscriptionId, \
-                   sku = tostring(properties.sku.name), \
-                   rbac = tostring(properties.enableRbacAuthorization), \
-                   uri = tostring(properties.vaultUri) \
-         | order by name asc"
-    );
+pub async fn resources(
+    ctx: &Context,
+    types: &[ResourceType],
+    name: Option<&str>,
+    fmt: OutputFormat,
+) -> Result<()> {
+    let kql = build_search_query(types, name);
     let rows = arm::graph_query(ctx, &kql).await?;
 
     match fmt {
         OutputFormat::Json => output::print_json(&json!(rows)),
-        OutputFormat::Table => output::print_table(
-            &["NAME", "RESOURCE GROUP", "LOCATION", "SKU", "RBAC", "URI"],
-            &rows,
-            &["name", "resourceGroup", "location", "sku", "rbac", "uri"],
-        ),
+        OutputFormat::Table => {
+            if rows.is_empty() {
+                println!("No matching resources found.");
+            } else {
+                output::print_table(
+                    &["NAME", "TYPE", "RESOURCE GROUP", "LOCATION", "SUBSCRIPTION"],
+                    &rows,
+                    &[
+                        "name",
+                        "type",
+                        "resourceGroup",
+                        "location",
+                        "subscriptionId",
+                    ],
+                );
+                println!("\n{} resource(s) found.", rows.len());
+            }
+        }
     }
     Ok(())
 }
