@@ -101,7 +101,7 @@ impl Curve {
 /// Overlay rotation-policy values onto `policy`. Pass
 /// `KeyRotationPolicy::default()` to build a policy from scratch. The
 /// service requires an expiry time whenever a Notify action exists, so that
-/// combination is rejected here with a actionable message instead of a 400.
+/// combination is rejected here with an actionable message instead of a 400.
 pub fn merge_rotation_policy(
     mut policy: KeyRotationPolicy,
     rotate_after: Option<&str>,
@@ -176,6 +176,9 @@ pub async fn create(ctx: &Context, args: &KeyCreateArgs, fmt: OutputFormat) -> R
     let client = client(ctx, &args.vault)?;
 
     // Fail on bad policy flags before creating anything.
+    if args.policy_expiry.is_some() && args.rotate_after.is_none() && args.notify_before.is_none() {
+        bail!("a policy expiry alone has no effect: add --rotate-after or --notify-before");
+    }
     let policy = if args.rotate_after.is_some()
         || args.notify_before.is_some()
         || args.policy_expiry.is_some()
@@ -539,6 +542,7 @@ pub async fn rotate(ctx: &Context, vault: &str, name: &str, fmt: OutputFormat) -
 #[cfg(test)]
 mod tests {
     use super::*;
+    use azure_security_keyvault_keys::models::KeyRotationPolicy;
 
     #[test]
     fn rsa_size_from_modulus() {
@@ -548,8 +552,6 @@ mod tests {
         assert_eq!(rsa_key_size_bits(&vec![0u8; 384]), 3072);
         assert_eq!(rsa_key_size_bits(&vec![0u8; 512]), 4096);
     }
-
-    use azure_security_keyvault_keys::models::KeyRotationPolicy;
 
     #[test]
     fn builds_policy_from_scratch() {

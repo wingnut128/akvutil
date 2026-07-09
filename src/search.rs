@@ -93,6 +93,10 @@ impl ResourceType {
 /// One KQL query covering all requested types — a single Resource Graph
 /// call regardless of how many types are searched.
 pub fn build_search_query(types: &[ResourceType], name: Option<&str>) -> String {
+    assert!(
+        !types.is_empty(),
+        "build_search_query requires at least one resource type"
+    );
     let filter = name
         .map(|n| format!(" | where {}", name_predicate(n)))
         .unwrap_or_default();
@@ -276,6 +280,21 @@ mod tests {
             name_predicate("te.st*a+b"),
             r"name matches regex '(?i)^te\\.st.*a\\+b$'"
         );
+    }
+
+    #[test]
+    fn backslash_adjacent_to_wildcard_compounds_correctly() {
+        // regex_escape adds one backslash, kql_escape doubles both.
+        assert_eq!(
+            name_predicate(r"a\b*c*d"),
+            r"name matches regex '(?i)^a\\\\b.*c.*d$'"
+        );
+    }
+
+    #[test]
+    fn bare_star_matches_everything_via_startswith() {
+        // Single trailing '*': the startswith arm wins over endswith by order.
+        assert_eq!(name_predicate("*"), "name startswith ''");
     }
 
     #[test]

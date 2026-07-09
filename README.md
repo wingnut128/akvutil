@@ -76,4 +76,4 @@ akvutil key rotate --vault v --name k
 ## Notes
 
 - Crate versions in `Cargo.toml` were verified against crates.io in July 2026. The SDK models are generated; if a point release renames a field the compiler will point right at it.
-- `cargo test` runs a few offline unit tests (URI normalization, RSA size inference).
+- `cargo test` runs ~35 offline unit tests covering URI normalization, RSA size inference, KQL query assembly and glob/injection escaping, duration/timestamp parsing, and CLI parsing.

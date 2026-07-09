@@ -145,9 +145,9 @@ pub async fn migrate(ctx: &Context, args: &VaultMigrateArgs, fmt: OutputFormat) 
             retention_days: src_retention,
             purge_protection: src_purge,
             tags: &[],
-            public_network_access: "enabled",
-            default_action: "Allow",
-            bypass: "AzureServices",
+            public_network_access: crate::PublicNetworkAccess::Enabled.as_str(),
+            default_action: crate::NetworkAction::Allow.as_str(),
+            bypass: crate::NetworkBypass::AzureServices.as_str(),
             ip_rules: &[],
             enabled_for_deployment: false,
             enabled_for_disk_encryption: false,
@@ -164,6 +164,9 @@ pub async fn migrate(ctx: &Context, args: &VaultMigrateArgs, fmt: OutputFormat) 
         keys::wait_until_ready(ctx, &args.target).await?;
         log.push("target vault is ready for key operations".to_string());
     }
+    log.push(
+        "note: network settings are not copied; the target vault uses service defaults".to_string(),
+    );
 
     // 2. Migrate keys.
     let key_report = keys::migrate_keys(
