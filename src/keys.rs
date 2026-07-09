@@ -18,7 +18,9 @@ use tokio::time::sleep;
 use crate::auth::Context;
 use crate::output;
 use crate::timespec;
-use crate::{Curve, KeyCreateArgs, KeyKind, KeyMigrateArgs, MigrateStrategy, OutputFormat};
+use crate::{
+    Curve, KeyCreateArgs, KeyKind, KeyMigrateArgs, MigrateStrategy, OutputFormat, RotationSetArgs,
+};
 
 fn client(ctx: &Context, vault: &str) -> Result<KeyClient> {
     KeyClient::new(&Context::vault_uri(vault)?, ctx.credential.clone(), None)
@@ -436,6 +438,102 @@ pub async fn migrate_keys(
         );
     }
     Ok(report)
+}
+
+/// Render a rotation policy as table lines or JSON.
+fn print_rotation_policy(policy: &KeyRotationPolicy, fmt: OutputFormat) -> Result<()> {
+    match fmt {
+        OutputFormat::Json => output::print_json(&serde_json::to_value(policy)?),
+        OutputFormat::Table => {
+            let expiry = policy
+                .attributes
+                .as_ref()
+                .and_then(|a| a.expiry_time.as_deref())
+                .unwrap_or("-");
+            println!("{:<22} {expiry}", "Version expiry");
+            for action in policy.lifetime_actions.iter().flatten() {
+                let kind = action
+                    .action
+                    .as_ref()
+                    .and_then(|t| t.type_prop)
+                    .map(|t| format!("{t:?}"))
+                    .unwrap_or_else(|| "?".into());
+                let trigger = action.trigger.as_ref();
+                let when = match (
+                    trigger.and_then(|t| t.time_after_create.as_deref()),
+                    trigger.and_then(|t| t.time_before_expiry.as_deref()),
+                ) {
+                    (Some(d), _) => format!("{d} after creation"),
+                    (_, Some(d)) => format!("{d} before expiry"),
+                    _ => "-".into(),
+                };
+                println!("{kind:<22} {when}");
+            }
+        }
+    }
+    Ok(())
+}
+
+pub async fn rotation_show(
+    ctx: &Context,
+    vault: &str,
+    name: &str,
+    fmt: OutputFormat,
+) -> Result<()> {
+    let client = client(ctx, vault)?;
+    let policy = client
+        .get_key_rotation_policy(name, None)
+        .await
+        .with_context(|| format!("failed to read rotation policy for key '{name}'"))?
+        .into_model()?;
+    print_rotation_policy(&policy, fmt)
+}
+
+pub async fn rotation_set(ctx: &Context, args: &RotationSetArgs, fmt: OutputFormat) -> Result<()> {
+    if args.rotate_after.is_none() && args.notify_before.is_none() && args.policy_expiry.is_none() {
+        bail!(
+            "nothing to set: pass at least one of --rotate-after, --notify-before, --policy-expiry"
+        );
+    }
+    let client = client(ctx, &args.vault)?;
+    // Read-modify-write: the PUT replaces the whole policy, so start from the
+    // current one to preserve whatever the caller didn't specify.
+    let current = client
+        .get_key_rotation_policy(&args.name, None)
+        .await
+        .with_context(|| format!("failed to read rotation policy for key '{}'", args.name))?
+        .into_model()?;
+    let merged = merge_rotation_policy(
+        current,
+        args.rotate_after.as_deref(),
+        args.notify_before.as_deref(),
+        args.policy_expiry.as_deref(),
+    )?;
+    let updated = client
+        .update_key_rotation_policy(&args.name, merged.try_into()?, None)
+        .await
+        .with_context(|| format!("failed to update rotation policy for key '{}'", args.name))?
+        .into_model()?;
+    print_rotation_policy(&updated, fmt)
+}
+
+pub async fn rotate(ctx: &Context, vault: &str, name: &str, fmt: OutputFormat) -> Result<()> {
+    let client = client(ctx, vault)?;
+    let key = client
+        .rotate_key(name, None)
+        .await
+        .with_context(|| format!("failed to rotate key '{name}'"))?
+        .into_model()?;
+    let kid = key
+        .key
+        .as_ref()
+        .and_then(|k| k.kid.clone())
+        .unwrap_or_default();
+    match fmt {
+        OutputFormat::Json => output::print_json(&json!({ "name": name, "kid": kid })),
+        OutputFormat::Table => println!("Rotated key '{name}'\n  new version kid: {kid}"),
+    }
+    Ok(())
 }
 
 #[cfg(test)]

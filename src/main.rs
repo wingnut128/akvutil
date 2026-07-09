@@ -244,6 +244,52 @@ pub enum KeyCommand {
     },
     /// Migrate keys between vaults
     Migrate(KeyMigrateArgs),
+    /// Show or set a key's rotation policy
+    #[command(subcommand)]
+    Rotation(RotationCommand),
+    /// Rotate a key now (creates a new version per the rotation policy)
+    Rotate {
+        /// Vault name or full https URI
+        #[arg(long)]
+        vault: String,
+        /// Key name
+        #[arg(long)]
+        name: String,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum RotationCommand {
+    /// Show the current rotation policy
+    Show {
+        /// Vault name or full https URI
+        #[arg(long)]
+        vault: String,
+        /// Key name
+        #[arg(long)]
+        name: String,
+    },
+    /// Update the rotation policy (unspecified parts are preserved)
+    Set(RotationSetArgs),
+}
+
+#[derive(Args)]
+pub struct RotationSetArgs {
+    /// Vault name or full https URI
+    #[arg(long)]
+    pub vault: String,
+    /// Key name
+    #[arg(long)]
+    pub name: String,
+    /// Auto-rotate this long after creation (e.g. 90d, P90D)
+    #[arg(long = "rotate-after")]
+    pub rotate_after: Option<String>,
+    /// Notify via Event Grid this long before expiry (requires an expiry time)
+    #[arg(long = "notify-before")]
+    pub notify_before: Option<String>,
+    /// Expiry applied to each newly rotated key version (e.g. 2y, P2Y)
+    #[arg(long = "policy-expiry")]
+    pub policy_expiry: Option<String>,
 }
 
 #[derive(Args)]
@@ -406,6 +452,15 @@ async fn main() -> Result<()> {
             KeyCommand::Create(args) => keys::create(&ctx, &args, cli.output).await,
             KeyCommand::List { vault } => keys::list(&ctx, &vault, cli.output).await,
             KeyCommand::Migrate(args) => keys::migrate(&ctx, &args, cli.output).await,
+            KeyCommand::Rotation(cmd) => match cmd {
+                RotationCommand::Show { vault, name } => {
+                    keys::rotation_show(&ctx, &vault, &name, cli.output).await
+                }
+                RotationCommand::Set(args) => keys::rotation_set(&ctx, &args, cli.output).await,
+            },
+            KeyCommand::Rotate { vault, name } => {
+                keys::rotate(&ctx, &vault, &name, cli.output).await
+            }
         },
         Command::Search(args) => match args.command {
             Some(SearchCommand::Usage { vault }) => search::usage(&ctx, &vault, cli.output).await,
@@ -518,5 +573,30 @@ mod tests {
         ] {
             assert!(parse_ip_rule(bad).is_err(), "accepted {bad:?}");
         }
+    }
+
+    #[test]
+    fn key_rotation_set_parses() {
+        let cli = super::Cli::try_parse_from([
+            "akvutil",
+            "key",
+            "rotation",
+            "set",
+            "--vault",
+            "v",
+            "--name",
+            "k",
+            "--rotate-after",
+            "90d",
+        ])
+        .unwrap();
+        let Some(super::Command::Key(super::KeyCommand::Rotation(super::RotationCommand::Set(
+            args,
+        )))) = cli.command
+        else {
+            panic!("expected key rotation set");
+        };
+        assert_eq!(args.rotate_after.as_deref(), Some("90d"));
+        assert!(args.notify_before.is_none());
     }
 }
