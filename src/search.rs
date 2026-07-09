@@ -318,7 +318,9 @@ mod tests {
         // Resource Graph rejects a leading `union (q1), (q2)` — the first
         // branch must be the pipeline head with the rest piped through union.
         assert!(q.starts_with("Resources | where type =~ 'microsoft.storage/storageaccounts'"));
-        assert!(q.contains("| union (Resources | where type =~ 'microsoft.compute/diskencryptionsets'"));
+        assert!(
+            q.contains("| union (Resources | where type =~ 'microsoft.compute/diskencryptionsets'")
+        );
         assert_eq!(q.matches("| where name contains 'prod'").count(), 2);
         assert!(q.ends_with("| order by type asc, name asc"));
     }

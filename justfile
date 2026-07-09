@@ -69,6 +69,11 @@ uninstall:
 run *args:
     cargo run -- {{args}}
 
+# Setup development environment (install git hooks)
+setup:
+    git config core.hooksPath .githooks
+    @echo "Git hooks installed. Pre-commit will run fmt and clippy."
+
 # Clean build artifacts
 clean:
     cargo clean

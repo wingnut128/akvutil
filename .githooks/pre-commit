@@ -1,0 +1,24 @@
+#!/bin/sh
+#
+# Pre-commit hook for akvutil
+# Auto-formats code, then lints before commit
+
+set -e
+
+echo "Running pre-commit checks..."
+
+# Auto-format and re-stage changed files
+echo "Formatting..."
+cargo fmt --all
+git diff --name-only --diff-filter=M | xargs -r git add
+
+# Run clippy with the same flags as CI
+echo "Running clippy..."
+if ! cargo clippy --all-targets -- -D warnings; then
+    echo ""
+    echo "ERROR: Clippy found issues."
+    echo "Fix the warnings above before committing."
+    exit 1
+fi
+
+echo "Pre-commit checks passed!"
