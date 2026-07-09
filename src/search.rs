@@ -100,14 +100,18 @@ pub fn build_search_query(types: &[ResourceType], name: Option<&str>) -> String 
     let filter = name
         .map(|n| format!(" | where {}", name_predicate(n)))
         .unwrap_or_default();
-    let mut branches: Vec<String> = types
+    // Resource Graph rejects a leading `union (q1), (q2)` form
+    // (Operator_FailedToResolveEntity on the table inside the parens), so
+    // the first branch heads the pipeline and the rest are piped in.
+    let mut branches = types
         .iter()
-        .map(|t| format!("({}{filter} | {})", t.branch(), t.projection()))
-        .collect();
-    let body = if branches.len() == 1 {
-        branches.pop().unwrap()
+        .map(|t| format!("{}{filter} | {}", t.branch(), t.projection()));
+    let first = branches.next().unwrap();
+    let rest: Vec<String> = branches.map(|b| format!("({b})")).collect();
+    let body = if rest.is_empty() {
+        first
     } else {
-        format!("union {}", branches.join(", "))
+        format!("{first} | union {}", rest.join(", "))
     };
     format!("{body} | order by type asc, name asc")
 }
@@ -301,9 +305,9 @@ mod tests {
     fn single_type_query_has_no_union() {
         assert_eq!(
             build_search_query(&[ResourceType::Keyvault], Some("foo*")),
-            "(Resources | where type =~ 'microsoft.keyvault/vaults' \
+            "Resources | where type =~ 'microsoft.keyvault/vaults' \
              | where name startswith 'foo' \
-             | project name, type, resourceGroup, location, subscriptionId, id) \
+             | project name, type, resourceGroup, location, subscriptionId, id \
              | order by type asc, name asc"
         );
     }
@@ -311,11 +315,22 @@ mod tests {
     #[test]
     fn multi_type_query_unions_branches_and_repeats_filter() {
         let q = build_search_query(&[ResourceType::Storage, ResourceType::Des], Some("prod"));
-        assert!(q.starts_with("union ("));
+        // Resource Graph rejects a leading `union (q1), (q2)` — the first
+        // branch must be the pipeline head with the rest piped through union.
+        assert!(q.starts_with("Resources | where type =~ 'microsoft.storage/storageaccounts'"));
+        assert!(q.contains("| union (Resources | where type =~ 'microsoft.compute/diskencryptionsets'"));
         assert_eq!(q.matches("| where name contains 'prod'").count(), 2);
-        assert!(q.contains("'microsoft.storage/storageaccounts'"));
-        assert!(q.contains("'microsoft.compute/diskencryptionsets'"));
         assert!(q.ends_with("| order by type asc, name asc"));
+    }
+
+    #[test]
+    fn multi_type_query_never_starts_with_union() {
+        // Regression: ARG 400s on `union (Resources | ...)` with
+        // Operator_FailedToResolveEntity — bare `akvutil search` hit this.
+        let q = build_search_query(&ResourceType::ALL, None);
+        assert!(!q.starts_with("union"));
+        assert_eq!(q.matches("| union (").count(), 1);
+        assert_eq!(q.matches("ResourceContainers").count(), 1);
     }
 
     #[test]
