@@ -5,6 +5,39 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-07-09
+
+### Changed (BREAKING)
+
+- `search vaults [query]` is replaced by the unified
+  `search --type keyvault --name <pattern>`; the search table now shows
+  NAME/TYPE/RESOURCE GROUP/LOCATION/SUBSCRIPTION instead of the
+  vault-specific SKU/RBAC/URI columns
+
+### Added
+
+- `search --type keyvault|storage|des|rg --name <pattern>` — one Resource
+  Graph query across key vaults, storage accounts, disk encryption sets,
+  and resource groups; substring match by default, `*` wildcards anchor
+  (`foo*` prefix, `*foo` suffix, `f*o` regex), injection-safe escaping
+- Full help when invoked without arguments (exit 2, on stderr)
+- `vault create`: `--public-network-access`, `--default-action`,
+  `--allow-ip` (validated IPv4/CIDR, repeatable), `--bypass`, and
+  `--enabled-for-deployment` / `--enabled-for-disk-encryption` /
+  `--enabled-for-template-deployment`; `vault show` displays the new fields
+- `key create`: attributes (`--enabled`, `--expires`, `--not-before`,
+  `--exportable`, `--tag`) and rotation policy (`--rotate-after`,
+  `--notify-before`, `--policy-expiry`, accepting `90d`/`3m`/`2y` or
+  ISO-8601 like `P90D`), validated client-side before the key is created
+- `key rotation show` / `key rotation set` — inspect or update a key's
+  rotation policy (read-modify-write; unspecified parts are preserved)
+- `key rotate` — manually rotate a key to a new version
+
+### Fixed
+
+- `vault migrate` now notes that network settings are not copied from the
+  source vault
+
 ## [0.2.0] - 2026-07-08
 
 ### Security
