@@ -143,6 +143,28 @@ pub enum MigrateStrategy {
     BackupRestore,
 }
 
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum)]
+pub enum ResourceType {
+    /// Key vaults (microsoft.keyvault/vaults)
+    Keyvault,
+    /// Storage accounts (microsoft.storage/storageaccounts)
+    Storage,
+    /// Disk encryption sets (microsoft.compute/diskencryptionsets)
+    Des,
+    /// Resource groups
+    Rg,
+}
+
+impl ResourceType {
+    #[allow(dead_code)] // used by the search CLI wired in the next task
+    pub const ALL: [ResourceType; 4] = [
+        ResourceType::Keyvault,
+        ResourceType::Storage,
+        ResourceType::Des,
+        ResourceType::Rg,
+    ];
+}
+
 #[derive(Subcommand)]
 pub enum KeyCommand {
     /// Create a key in a vault

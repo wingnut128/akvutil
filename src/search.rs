@@ -9,6 +9,7 @@ use crate::arm;
 use crate::auth::Context;
 use crate::output;
 use crate::OutputFormat;
+use crate::ResourceType;
 
 /// Escape a value for embedding in a single-quoted KQL string literal. KQL
 /// uses backslash escaping, so the backslash must be escaped *before* the
@@ -58,6 +59,58 @@ pub fn name_predicate(pattern: &str) -> String {
             format!("name matches regex '(?i)^{body}$'")
         }
     }
+}
+
+impl ResourceType {
+    /// Source table + type filter for this resource type.
+    #[allow(dead_code)] // used by the search CLI wired in the next task
+    fn branch(self) -> &'static str {
+        match self {
+            ResourceType::Keyvault => {
+                "Resources | where type =~ 'microsoft.keyvault/vaults'"
+            }
+            ResourceType::Storage => {
+                "Resources | where type =~ 'microsoft.storage/storageaccounts'"
+            }
+            ResourceType::Des => {
+                "Resources | where type =~ 'microsoft.compute/diskencryptionsets'"
+            }
+            ResourceType::Rg => {
+                "ResourceContainers | where type =~ 'microsoft.resources/subscriptions/resourcegroups'"
+            }
+        }
+    }
+
+    /// Common projection. Resource groups have no parent group, so they
+    /// project their own name into the resourceGroup column.
+    #[allow(dead_code)] // used by the search CLI wired in the next task
+    fn projection(self) -> &'static str {
+        match self {
+            ResourceType::Rg => {
+                "project name, type, resourceGroup = name, location, subscriptionId, id"
+            }
+            _ => "project name, type, resourceGroup, location, subscriptionId, id",
+        }
+    }
+}
+
+/// One KQL query covering all requested types — a single Resource Graph
+/// call regardless of how many types are searched.
+#[allow(dead_code)] // used by the search CLI wired in the next task
+pub fn build_search_query(types: &[ResourceType], name: Option<&str>) -> String {
+    let filter = name
+        .map(|n| format!(" | where {}", name_predicate(n)))
+        .unwrap_or_default();
+    let mut branches: Vec<String> = types
+        .iter()
+        .map(|t| format!("({}{filter} | {})", t.branch(), t.projection()))
+        .collect();
+    let body = if branches.len() == 1 {
+        branches.pop().unwrap()
+    } else {
+        format!("union {}", branches.join(", "))
+    };
+    format!("{body} | order by type asc, name asc")
 }
 
 pub async fn vaults(ctx: &Context, query: Option<&str>, fmt: OutputFormat) -> Result<()> {
@@ -158,7 +211,8 @@ pub async fn usage(ctx: &Context, vault: &str, fmt: OutputFormat) -> Result<()> 
 
 #[cfg(test)]
 mod tests {
-    use super::{kql_escape, name_predicate};
+    use super::{build_search_query, kql_escape, name_predicate};
+    use crate::ResourceType;
 
     #[test]
     fn escapes_backslash_before_quote() {
@@ -221,5 +275,37 @@ mod tests {
             name_predicate("te.st*a+b"),
             r"name matches regex '(?i)^te\\.st.*a\\+b$'"
         );
+    }
+
+    #[test]
+    fn single_type_query_has_no_union() {
+        assert_eq!(
+            build_search_query(&[ResourceType::Keyvault], Some("foo*")),
+            "(Resources | where type =~ 'microsoft.keyvault/vaults' \
+             | where name startswith 'foo' \
+             | project name, type, resourceGroup, location, subscriptionId, id) \
+             | order by type asc, name asc"
+        );
+    }
+
+    #[test]
+    fn multi_type_query_unions_branches_and_repeats_filter() {
+        let q = build_search_query(&[ResourceType::Storage, ResourceType::Des], Some("prod"));
+        assert!(q.starts_with("union ("));
+        assert_eq!(q.matches("| where name contains 'prod'").count(), 2);
+        assert!(q.contains("'microsoft.storage/storageaccounts'"));
+        assert!(q.contains("'microsoft.compute/diskencryptionsets'"));
+        assert!(q.ends_with("| order by type asc, name asc"));
+    }
+
+    #[test]
+    fn rg_branch_uses_resourcecontainers_and_projects_own_name() {
+        let q = build_search_query(&[ResourceType::Rg], None);
+        assert!(q.contains(
+            "ResourceContainers | where type =~ 'microsoft.resources/subscriptions/resourcegroups'"
+        ));
+        assert!(q.contains("resourceGroup = name"));
+        // No name filter when no pattern given.
+        assert!(!q.contains("| where name"));
     }
 }
