@@ -20,6 +20,14 @@ fn summarize(vault: &Value) -> Value {
         "purgeProtection": vault.pointer("/properties/enablePurgeProtection"),
         "uri": vault.pointer("/properties/vaultUri"),
         "provisioningState": vault.pointer("/properties/provisioningState"),
+        "publicNetworkAccess": vault.pointer("/properties/publicNetworkAccess"),
+        "networkDefaultAction": vault.pointer("/properties/networkAcls/defaultAction"),
+        "networkBypass": vault.pointer("/properties/networkAcls/bypass"),
+        "ipRules": vault.pointer("/properties/networkAcls/ipRules")
+            .and_then(Value::as_array).map(Vec::len),
+        "enabledForDeployment": vault.pointer("/properties/enabledForDeployment"),
+        "enabledForDiskEncryption": vault.pointer("/properties/enabledForDiskEncryption"),
+        "enabledForTemplateDeployment": vault.pointer("/properties/enabledForTemplateDeployment"),
     })
 }
 
@@ -37,6 +45,13 @@ fn print_vault(vault: &Value, fmt: OutputFormat) {
                 ("Purge protection", "purgeProtection"),
                 ("URI", "uri"),
                 ("State", "provisioningState"),
+                ("Public network", "publicNetworkAccess"),
+                ("Net default", "networkDefaultAction"),
+                ("Net bypass", "networkBypass"),
+                ("IP rules", "ipRules"),
+                ("For deployment", "enabledForDeployment"),
+                ("For disk encrypt", "enabledForDiskEncryption"),
+                ("For templates", "enabledForTemplateDeployment"),
             ] {
                 println!("{label:<18} {}", output::display(&s[key]));
             }
@@ -45,6 +60,12 @@ fn print_vault(vault: &Value, fmt: OutputFormat) {
 }
 
 pub async fn create(ctx: &Context, args: &VaultCreateArgs, fmt: OutputFormat) -> Result<()> {
+    if !args.allow_ip.is_empty() && args.default_action == crate::NetworkAction::Allow {
+        eprintln!(
+            "warning: --allow-ip has no effect while --default-action is 'allow'; \
+             use --default-action deny to enforce the IP rules"
+        );
+    }
     let spec = VaultSpec {
         name: &args.name,
         resource_group: &args.resource_group,
@@ -54,6 +75,13 @@ pub async fn create(ctx: &Context, args: &VaultCreateArgs, fmt: OutputFormat) ->
         retention_days: args.retention_days,
         purge_protection: args.purge_protection,
         tags: &args.tag,
+        public_network_access: args.public_network_access.as_str(),
+        default_action: args.default_action.as_str(),
+        bypass: args.bypass.as_str(),
+        ip_rules: &args.allow_ip,
+        enabled_for_deployment: args.enabled_for_deployment,
+        enabled_for_disk_encryption: args.enabled_for_disk_encryption,
+        enabled_for_template_deployment: args.enabled_for_template_deployment,
     };
     let vault = arm::create_vault(ctx, &spec).await?;
     print_vault(&vault, fmt);
@@ -117,6 +145,13 @@ pub async fn migrate(ctx: &Context, args: &VaultMigrateArgs, fmt: OutputFormat) 
             retention_days: src_retention,
             purge_protection: src_purge,
             tags: &[],
+            public_network_access: crate::PublicNetworkAccess::Enabled.as_str(),
+            default_action: crate::NetworkAction::Allow.as_str(),
+            bypass: crate::NetworkBypass::AzureServices.as_str(),
+            ip_rules: &[],
+            enabled_for_deployment: false,
+            enabled_for_disk_encryption: false,
+            enabled_for_template_deployment: false,
         };
         arm::create_vault(ctx, &spec).await?;
         log.push(format!(
@@ -129,6 +164,7 @@ pub async fn migrate(ctx: &Context, args: &VaultMigrateArgs, fmt: OutputFormat) 
         keys::wait_until_ready(ctx, &args.target).await?;
         log.push("target vault is ready for key operations".to_string());
     }
+    log.push("note: network settings are not copied from the source vault".to_string());
 
     // 2. Migrate keys.
     let key_report = keys::migrate_keys(
