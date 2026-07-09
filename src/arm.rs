@@ -45,6 +45,13 @@ pub struct VaultSpec<'a> {
     pub retention_days: u32,
     pub purge_protection: bool,
     pub tags: &'a [(String, String)],
+    pub public_network_access: &'a str,
+    pub default_action: &'a str,
+    pub bypass: &'a str,
+    pub ip_rules: &'a [String],
+    pub enabled_for_deployment: bool,
+    pub enabled_for_disk_encryption: bool,
+    pub enabled_for_template_deployment: bool,
 }
 
 async fn check(resp: reqwest::Response) -> Result<Value> {
@@ -134,6 +141,19 @@ pub async fn create_vault(ctx: &Context, spec: &VaultSpec<'_>) -> Result<Value> 
         "enableRbacAuthorization": spec.rbac,
         "softDeleteRetentionInDays": spec.retention_days,
         "accessPolicies": [],
+        "publicNetworkAccess": spec.public_network_access,
+        "enabledForDeployment": spec.enabled_for_deployment,
+        "enabledForDiskEncryption": spec.enabled_for_disk_encryption,
+        "enabledForTemplateDeployment": spec.enabled_for_template_deployment,
+        // Defaults ("Allow"/"AzureServices"/no rules) match the service
+        // defaults, so always sending networkAcls is behavior-preserving.
+        "networkAcls": {
+            "defaultAction": spec.default_action,
+            "bypass": spec.bypass,
+            "ipRules": spec.ip_rules.iter()
+                .map(|ip| json!({ "value": ip }))
+                .collect::<Vec<_>>(),
+        },
     });
     if spec.purge_protection {
         // Only send when enabling: the API rejects an explicit `false` on

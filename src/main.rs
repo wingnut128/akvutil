@@ -86,6 +86,27 @@ pub struct VaultCreateArgs {
     /// Tags as key=value pairs
     #[arg(long, value_parser = parse_tag)]
     pub tag: Vec<(String, String)>,
+    /// Public network access to the vault
+    #[arg(long, value_enum, default_value_t = PublicNetworkAccess::Enabled)]
+    pub public_network_access: PublicNetworkAccess,
+    /// Default network ACL action for traffic not matching an IP rule
+    #[arg(long, value_enum, default_value_t = NetworkAction::Allow)]
+    pub default_action: NetworkAction,
+    /// Allow this IPv4 address or CIDR range (repeatable)
+    #[arg(long = "allow-ip", value_parser = parse_ip_rule)]
+    pub allow_ip: Vec<String>,
+    /// Traffic allowed to bypass the network ACLs
+    #[arg(long, value_enum, default_value_t = NetworkBypass::AzureServices)]
+    pub bypass: NetworkBypass,
+    /// Allow Azure VMs to retrieve certificates stored as secrets
+    #[arg(long)]
+    pub enabled_for_deployment: bool,
+    /// Allow Azure Disk Encryption to retrieve secrets and unwrap keys
+    #[arg(long)]
+    pub enabled_for_disk_encryption: bool,
+    /// Allow ARM template deployments to retrieve secrets
+    #[arg(long)]
+    pub enabled_for_template_deployment: bool,
 }
 
 #[derive(Args)]
@@ -129,6 +150,53 @@ impl VaultSku {
         match self {
             VaultSku::Standard => "standard",
             VaultSku::Premium => "premium",
+        }
+    }
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, ValueEnum)]
+pub enum PublicNetworkAccess {
+    Enabled,
+    Disabled,
+}
+
+impl PublicNetworkAccess {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            PublicNetworkAccess::Enabled => "enabled",
+            PublicNetworkAccess::Disabled => "disabled",
+        }
+    }
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, ValueEnum)]
+pub enum NetworkAction {
+    Allow,
+    Deny,
+}
+
+impl NetworkAction {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            NetworkAction::Allow => "Allow",
+            NetworkAction::Deny => "Deny",
+        }
+    }
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, ValueEnum)]
+pub enum NetworkBypass {
+    /// Trusted Azure services may bypass the network ACLs
+    AzureServices,
+    /// No traffic bypasses the network ACLs
+    None,
+}
+
+impl NetworkBypass {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            NetworkBypass::AzureServices => "AzureServices",
+            NetworkBypass::None => "None",
         }
     }
 }
@@ -270,6 +338,22 @@ fn parse_tag(s: &str) -> Result<(String, String), String> {
         .ok_or_else(|| format!("invalid tag '{s}', expected key=value"))
 }
 
+fn parse_ip_rule(s: &str) -> Result<String, String> {
+    let (ip, prefix) = match s.split_once('/') {
+        Some((ip, p)) => (ip, Some(p)),
+        None => (s, None),
+    };
+    if ip.parse::<std::net::Ipv4Addr>().is_err() {
+        return Err(format!("invalid IPv4 address '{s}'"));
+    }
+    if let Some(p) = prefix {
+        if !p.parse::<u8>().is_ok_and(|n| n <= 32) {
+            return Err(format!("invalid CIDR prefix in '{s}' (expected /0-/32)"));
+        }
+    }
+    Ok(s.to_string())
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
@@ -386,5 +470,29 @@ mod tests {
             args.command,
             Some(super::SearchCommand::Usage { vault }) if vault == "myvault"
         ));
+    }
+
+    use super::parse_ip_rule;
+
+    #[test]
+    fn accepts_ipv4_and_cidr() {
+        assert_eq!(parse_ip_rule("1.2.3.4").unwrap(), "1.2.3.4");
+        assert_eq!(parse_ip_rule("10.0.0.0/24").unwrap(), "10.0.0.0/24");
+        assert_eq!(parse_ip_rule("0.0.0.0/0").unwrap(), "0.0.0.0/0");
+    }
+
+    #[test]
+    fn rejects_bad_ip_rules() {
+        for bad in [
+            "",
+            "notanip",
+            "1.2.3",
+            "1.2.3.4.5",
+            "1.2.3.4/33",
+            "1.2.3.4/x",
+            "::1",
+        ] {
+            assert!(parse_ip_rule(bad).is_err(), "accepted {bad:?}");
+        }
     }
 }
