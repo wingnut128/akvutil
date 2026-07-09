@@ -64,6 +64,15 @@ akvutil search usage --vault myvault               # who uses this vault?
 
 Usage search runs a Resource Graph query matching the vault URI (`<name>.vault.azure.net`) and vault resource ID against every resource's ARM properties, which catches storage account CMK configs, disk encryption sets, SQL TDE, ADE-enabled VMs, and anything else that stores the reference in ARM. It cannot see references living only in app settings, code, or pipelines. When no `--subscription` is given, Resource Graph searches all subscriptions visible to your credential.
 
+### Locations
+
+```
+akvutil locations                    # every region the subscription can use
+akvutil locations --name 'east*'     # same pattern semantics as search
+```
+
+Lists Azure regions live from ARM — name, display name, geography, and paired region — so the output reflects exactly what your subscription can use. Handy for picking a DR-sensible target region for `vault create` or `vault migrate`. Newer zone-redundant-only regions have no pair and show `-`.
+
 ### Key rotation
 
 ```
@@ -76,4 +85,4 @@ akvutil key rotate --vault v --name k
 ## Notes
 
 - Crate versions in `Cargo.toml` were verified against crates.io in July 2026. The SDK models are generated; if a point release renames a field the compiler will point right at it.
-- `cargo test` runs ~35 offline unit tests covering URI normalization, RSA size inference, KQL query assembly and glob/injection escaping, duration/timestamp parsing, and CLI parsing.
+- `cargo test` runs ~45 offline unit tests covering URI normalization, RSA size inference, KQL query assembly and glob/injection escaping, region row projection, duration/timestamp parsing, and CLI parsing.
