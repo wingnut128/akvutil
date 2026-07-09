@@ -19,6 +19,47 @@ fn kql_escape(s: &str) -> String {
     s.replace('\\', "\\\\").replace('\'', "\\'")
 }
 
+/// Escape regex metacharacters so a literal chunk of a wildcard pattern
+/// cannot alter the regex built around it.
+#[allow(dead_code)] // used by name_predicate
+fn regex_escape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        if r"\.+*?()|[]{}^$".contains(c) {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    out
+}
+
+/// Translate a glob-style pattern into a KQL predicate over `name`.
+/// No '*' means substring match; a single leading/trailing '*' anchors the
+/// match; anything else compiles to an anchored case-insensitive regex.
+/// KQL contains/startswith/endswith are already case-insensitive.
+#[allow(dead_code)] // used by build_search_query in the next task
+pub fn name_predicate(pattern: &str) -> String {
+    let stars = pattern.matches('*').count();
+    match stars {
+        0 => format!("name contains '{}'", kql_escape(pattern)),
+        1 if pattern.ends_with('*') => format!(
+            "name startswith '{}'",
+            kql_escape(&pattern[..pattern.len() - 1])
+        ),
+        1 if pattern.starts_with('*') => {
+            format!("name endswith '{}'", kql_escape(&pattern[1..]))
+        }
+        _ => {
+            let body = pattern
+                .split('*')
+                .map(|part| kql_escape(&regex_escape(part)))
+                .collect::<Vec<_>>()
+                .join(".*");
+            format!("name matches regex '(?i)^{body}$'")
+        }
+    }
+}
+
 pub async fn vaults(ctx: &Context, query: Option<&str>, fmt: OutputFormat) -> Result<()> {
     let filter = match query {
         Some(q) => format!("| where name contains '{}'", kql_escape(q)),
@@ -117,7 +158,7 @@ pub async fn usage(ctx: &Context, vault: &str, fmt: OutputFormat) -> Result<()> 
 
 #[cfg(test)]
 mod tests {
-    use super::kql_escape;
+    use super::{kql_escape, name_predicate};
 
     #[test]
     fn escapes_backslash_before_quote() {
@@ -127,5 +168,58 @@ mod tests {
         assert_eq!(kql_escape("o'brien"), r"o\'brien");
         assert_eq!(kql_escape(r"c:\path"), r"c:\\path");
         assert_eq!(kql_escape("plain"), "plain");
+    }
+
+    #[test]
+    fn plain_name_is_contains() {
+        assert_eq!(name_predicate("testfoo"), "name contains 'testfoo'");
+    }
+
+    #[test]
+    fn trailing_star_is_startswith() {
+        assert_eq!(name_predicate("testfoo*"), "name startswith 'testfoo'");
+    }
+
+    #[test]
+    fn leading_star_is_endswith() {
+        assert_eq!(name_predicate("*foo"), "name endswith 'foo'");
+    }
+
+    #[test]
+    fn internal_star_is_case_insensitive_anchored_regex() {
+        assert_eq!(
+            name_predicate("te*foo"),
+            r"name matches regex '(?i)^te.*foo$'"
+        );
+    }
+
+    #[test]
+    fn multiple_stars_use_regex() {
+        assert_eq!(
+            name_predicate("*crypto*"),
+            r"name matches regex '(?i)^.*crypto.*$'"
+        );
+    }
+
+    #[test]
+    fn kql_injection_is_escaped_in_all_branches() {
+        assert_eq!(name_predicate("o'brien"), r"name contains 'o\'brien'");
+        assert_eq!(name_predicate(r"\'*"), r"name startswith '\\\''");
+        assert_eq!(name_predicate("*'"), r"name endswith '\''");
+        // Regex branch: quote must still be KQL-escaped inside the regex literal.
+        assert_eq!(
+            name_predicate("a'*b*c"),
+            r"name matches regex '(?i)^a\'.*b.*c$'"
+        );
+    }
+
+    #[test]
+    fn regex_metacharacters_in_literals_are_escaped() {
+        // '.' and '+' must match literally, and the regex backslashes must be
+        // doubled by kql_escape so KQL hands the regex engine a single backslash.
+        assert_eq!(
+            name_predicate("te.st*a+b"),
+            r"name matches regex '(?i)^te\\.st.*a\\+b$'"
+        );
     }
 }
