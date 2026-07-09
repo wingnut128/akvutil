@@ -1,6 +1,7 @@
 mod arm;
 mod auth;
 mod keys;
+mod locations;
 mod output;
 mod search;
 mod timespec;
@@ -45,6 +46,15 @@ pub enum Command {
     Key(KeyCommand),
     /// Find resources by type and name, or find what uses a vault
     Search(SearchArgs),
+    /// List Azure regions and their paired region
+    Locations(LocationsArgs),
+}
+
+#[derive(Args)]
+pub struct LocationsArgs {
+    /// Name pattern: substring match, or use '*' wildcards (foo*, *foo, f*o)
+    #[arg(long)]
+    pub name: Option<String>,
 }
 
 #[derive(Subcommand)]
@@ -475,6 +485,7 @@ async fn main() -> Result<()> {
                 search::resources(&ctx, &types, args.name.as_deref(), cli.output).await
             }
         },
+        Command::Locations(args) => locations::list(&ctx, args.name.as_deref(), cli.output).await,
     }
 }
 
