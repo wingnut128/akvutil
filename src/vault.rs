@@ -164,9 +164,7 @@ pub async fn migrate(ctx: &Context, args: &VaultMigrateArgs, fmt: OutputFormat) 
         keys::wait_until_ready(ctx, &args.target).await?;
         log.push("target vault is ready for key operations".to_string());
     }
-    log.push(
-        "note: network settings are not copied; the target vault uses service defaults".to_string(),
-    );
+    log.push("note: network settings are not copied from the source vault".to_string());
 
     // 2. Migrate keys.
     let key_report = keys::migrate_keys(
