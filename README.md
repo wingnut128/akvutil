@@ -54,12 +54,24 @@ Migration strategies: `recreate` builds same-shape keys (type, size, curve, ops)
 ### Search
 
 ```
-akvutil search vaults               # all vaults in the subscription
-akvutil search vaults prod          # name filter
-akvutil search usage --vault kv-old # who uses this vault?
+akvutil search --type keyvault --name 'testfoo*'   # prefix match
+akvutil search --type storage,des,rg --name prod   # substring match
+akvutil search --name '*crypto*'                   # all types
+akvutil search usage --vault myvault               # who uses this vault?
 ```
 
+`--name` matches substrings by default; `*` wildcards anchor the match (`foo*` prefix, `*foo` suffix, `f*o` regex).
+
 Usage search runs a Resource Graph query matching the vault URI (`<name>.vault.azure.net`) and vault resource ID against every resource's ARM properties, which catches storage account CMK configs, disk encryption sets, SQL TDE, ADE-enabled VMs, and anything else that stores the reference in ARM. It cannot see references living only in app settings, code, or pipelines. When no `--subscription` is given, Resource Graph searches all subscriptions visible to your credential.
+
+### Key rotation
+
+```
+akvutil key create --vault v --name k --rotate-after 90d --policy-expiry 2y
+akvutil key rotation show --vault v --name k
+akvutil key rotation set --vault v --name k --notify-before 30d
+akvutil key rotate --vault v --name k
+```
 
 ## Notes
 
