@@ -64,7 +64,7 @@ Rust 2024 migration is a prerequisite added at the user’s request on 2026-09-2
 
 **Interfaces:** Keep `Context::vault_uri(vault: &str) -> Result<String>`. Return a normalized HTTPS endpoint with a lowercase hostname and no trailing slash. Use `reqwest::Url`, already available through the existing dependency.
 
-- [ ] Add regression cases to the existing test module:
+- [x] Add regression cases to the existing test module:
 
 ```rust
 #[test]
@@ -93,11 +93,11 @@ fn canonicalizes_equivalent_endpoints() {
 }
 ```
 
-- [ ] Run `cargo test auth::tests`; confirm the query/fragment and normalization regressions fail before changing production code.
-- [ ] Preserve the existing bare-name validation. For full URLs, reject controls, whitespace, backslashes, query/fragment delimiters, and explicit ports/userinfo before URL normalization. An explicit `:443` must remain rejected even though `Url::port()` normalizes it away. Preserve the current lowercase `https://` input convention; accepting other scheme spellings is outside this patch.
-- [ ] Parse using `reqwest::Url::parse`; require scheme `https`, root path, no query/fragment/userinfo, and a nonempty host whose lowercase form ends with a supported `VAULT_SUFFIXES` entry. Validate the actual parsed `host_str()`, not the input suffix. Return `format!("https://{host}")`.
-- [ ] Extend positive tests across the existing sovereign-cloud and Managed HSM suffixes, and preserve rejection of foreign suffix lookalikes, HTTP, paths, ports, and invalid bare names. Run `cargo test auth::tests` again.
-- [ ] Commit: `fix: validate parsed vault endpoint hosts`.
+- [x] Run `cargo test auth::tests`; confirm the query/fragment and normalization regressions fail before changing production code.
+- [x] Preserve the existing bare-name validation. For full URLs, reject controls, whitespace, backslashes, query/fragment delimiters, and explicit ports/userinfo before URL normalization. An explicit `:443` must remain rejected even though `Url::port()` normalizes it away. Preserve the current lowercase `https://` input convention; accepting other scheme spellings is outside this patch.
+- [x] Parse using `reqwest::Url::parse`; require scheme `https`, root path, no query/fragment/userinfo, and a nonempty host whose lowercase form ends with a supported `VAULT_SUFFIXES` entry. Validate the actual parsed `host_str()`, not the input suffix. Return `format!("https://{host}")`.
+- [x] Extend positive tests across the existing sovereign-cloud and Managed HSM suffixes, and preserve rejection of foreign suffix lookalikes, HTTP, paths, ports, and invalid bare names. Run `cargo test auth::tests` again.
+- [x] Commit: `fix: validate parsed vault endpoint hosts`.
 
 ### Task 2: Reject migrations into the source vault
 
@@ -105,7 +105,7 @@ fn canonicalizes_equivalent_endpoints() {
 
 **Interfaces:** Add `pub fn ensure_distinct_vaults(source: &str, target: &str) -> Result<()>` in `auth.rs`; consumes the canonicalization from Task 1. Both migration entry points call it before any network request or mutation.
 
-- [ ] Add tests covering identical bare names, bare name versus URI, uppercase host plus trailing slash, two distinct names, distinct supported cloud endpoints, and malformed inputs:
+- [x] Add tests covering identical bare names, bare name versus URI, uppercase host plus trailing slash, two distinct names, distinct supported cloud endpoints, and malformed inputs:
 
 ```rust
 #[test]
@@ -120,8 +120,8 @@ fn migration_requires_distinct_endpoints() {
 }
 ```
 
-- [ ] Run `cargo test auth::tests`; confirm failure before implementing the helper.
-- [ ] Implement the guard:
+- [x] Run `cargo test auth::tests`; confirm failure before implementing the helper.
+- [x] Implement the guard:
 
 ```rust
 pub fn ensure_distinct_vaults(source: &str, target: &str) -> Result<()> {
@@ -132,9 +132,9 @@ pub fn ensure_distinct_vaults(source: &str, target: &str) -> Result<()> {
 }
 ```
 
-- [ ] Add `crate::auth::ensure_distinct_vaults(source_vault, target_vault)?;` as the first statement of `keys::migrate_keys`; add the equivalent check using `args.source` and `args.target` as the first statement of `vault::migrate`. Apply the guard for both strategies and dry-run mode.
-- [ ] Add async tests invoking both public migration functions with equal endpoints and assert the distinct-vault error is returned without credentials being acquired. Construct `Context::new(None)`; use CLI parsing for `VaultMigrateArgs` rather than duplicating defaults. For `migrate_keys`, test both strategies and both dry-run values. These tests must complete without Azure login or network connectivity.
-- [ ] Run `cargo test`; commit: `fix: reject same-vault migrations before writes`.
+- [x] Add `crate::auth::ensure_distinct_vaults(source_vault, target_vault)?;` as the first statement of `keys::migrate_keys`; add the equivalent check using `args.source` and `args.target` as the first statement of `vault::migrate`. Apply the guard for both strategies and dry-run mode.
+- [x] Add async tests invoking both public migration functions with equal endpoints and assert the distinct-vault error is returned without credentials being acquired. Construct `Context::new(None)`; use CLI parsing for `VaultMigrateArgs` rather than duplicating defaults. For `migrate_keys`, test both strategies and both dry-run values. These tests must complete without Azure login or network connectivity.
+- [x] Run `cargo test`; commit: `fix: reject same-vault migrations before writes`.
 
 ### Task 3: Reuse existing migration destinations safely
 
@@ -144,11 +144,11 @@ pub fn ensure_distinct_vaults(source: &str, target: &str) -> Result<()> {
 
 **Compatibility policy:** Existing location and SKU must match the effective migration request (explicit flags, otherwise inherited source values), compared case-insensitively. Retention must be at least the inherited source retention; if the source has purge protection, the destination must too. Missing/malformed required fields are errors. Preserve existing RBAC mode, permissions, firewall, tags, and service flags, even when different from the source. Error messages name the mismatch and explain that migration will not reconfigure an existing destination.
 
-- [ ] Add unit tests for lookup response classification: valid 200 JSON becomes `Some`, only HTTP 404 becomes `None`, 401/403/429/500 remain errors, and malformed successful bodies fail. Extract a pure response decoder accepting `(reqwest::StatusCode, &str)` as needed. Do not convert arbitrary `anyhow` errors into absence or inspect error strings for `404`.
-- [ ] Run `cargo test arm::tests` to establish failing coverage.
-- [ ] Refactor `send` just enough to expose the final response status to optional lookup while retaining authentication, retry counts, backoff, and existing error messages. Route only the new lookup through the optional decoder; do not turn 404 into success for unrelated operations.
-- [ ] Add compatibility tests using complete JSON fixtures. Cover matching targets, mixed-case location/SKU, longer target retention, stricter purge protection, wrong location/SKU, shorter retention, missing required fields, and RBAC/network settings differing from the source but remaining valid.
-- [ ] Add an injectable orchestration seam for destination selection. A small internal async helper can accept lookup and create closures so tests record whether creation was invoked without an HTTP server:
+- [x] Add unit tests for lookup response classification: valid 200 JSON becomes `Some`, only HTTP 404 becomes `None`, 401/403/429/500 remain errors, and malformed successful bodies fail. Extract a pure response decoder accepting `(reqwest::StatusCode, &str)` as needed. Do not convert arbitrary `anyhow` errors into absence or inspect error strings for `404`.
+- [x] Run `cargo test arm::tests` to establish failing coverage.
+- [x] Refactor `send` just enough to expose the final response status to optional lookup while retaining authentication, retry counts, backoff, and existing error messages. Route only the new lookup through the optional decoder; do not turn 404 into success for unrelated operations.
+- [x] Add compatibility tests using complete JSON fixtures. Cover matching targets, mixed-case location/SKU, longer target retention, stricter purge protection, wrong location/SKU, shorter retention, missing required fields, and RBAC/network settings differing from the source but remaining valid.
+- [x] Add an injectable orchestration seam for destination selection. A small internal async helper can accept lookup and create closures so tests record whether creation was invoked without an HTTP server:
 
 ```rust
 async fn select_target<L, LF, C, CF, V>(
@@ -173,7 +173,7 @@ where
 
 `bool` means “created”. Keep this helper private to `vault.rs`; its production callers use the real ARM lookup/create functions. Dry-run performs lookup and compatibility checks but never calls the write helper.
 
-- [ ] Test the write boundary directly. An existing restricted/access-policy target must be returned unchanged, with a create closure that panics if called. A lookup error and an incompatible existing target must also leave create uncalled. A missing target invokes create exactly once. Exercise a two-run retry: first lookup returns None and creates; second lookup returns that configured target and performs no PUT.
+- [x] Test the write boundary directly. An existing restricted/access-policy target must be returned unchanged, with a create closure that panics if called. A lookup error and an incompatible existing target must also leave create uncalled. A missing target invokes create exactly once. Exercise a two-run retry: first lookup returns None and creates; second lookup returns that configured target and performs no PUT.
 
 ```rust
 let actual = select_target(
@@ -185,9 +185,9 @@ assert_eq!(actual.0, expected);
 assert!(!actual.1);
 ```
 
-- [ ] Wire destination lookup/selection after Task 2's guard and source lookup, before readiness polling and key migration. Report `reusing existing vault` versus `created vault` accurately. Dry-run reports which path would occur, including compatibility failures, and performs no writes. Keep readiness/authorization checks for both paths; a failed check must not trigger reconfiguration.
-- [ ] Update README/runbook instructions: retrying preserves destination configuration; same-vault requests fail; existing incompatible targets fail rather than being modified; key-copy operations are not made idempotent by this change. Explain that backup/restore can still reject already restored keys and recreate retries can still create additional versions.
-- [ ] Run `cargo test arm::tests`, `cargo test vault::tests`, then `cargo test`. Commit: `fix: preserve existing migration destination settings`.
+- [x] Wire destination lookup/selection after Task 2's guard and source lookup, before readiness polling and key migration. Report `reusing existing vault` versus `created vault` accurately. Dry-run reports which path would occur, including compatibility failures, and performs no writes. Keep readiness/authorization checks for both paths; a failed check must not trigger reconfiguration.
+- [x] Update README/runbook instructions: retrying preserves destination configuration; same-vault requests fail; existing incompatible targets fail rather than being modified; key-copy operations are not made idempotent by this change. Explain that backup/restore can still reject already restored keys and recreate retries can still create additional versions.
+- [x] Run `cargo test arm::tests`, `cargo test vault::tests`, then `cargo test`. Commit: `fix: preserve existing migration destination settings`.
 
 **Limit:** A GET-before-PUT check does not provide atomic exclusion against another actor creating the same vault concurrently. Do not claim concurrency safety or invent an unsupported Azure conditional-create header. Cross-actor provisioning coordination is outside these five findings.
 
@@ -197,7 +197,7 @@ assert!(!actual.1);
 
 **Interfaces:** Preserve `name_matches(pattern: &str, name: &str) -> bool` and current case-insensitive substring/glob semantics.
 
-- [ ] Add the regression matrix:
+- [x] Add the regression matrix:
 
 ```rust
 #[test]
@@ -221,9 +221,9 @@ fn anchored_suffix_uses_final_occurrence_without_overlap() {
 }
 ```
 
-- [ ] Run `cargo test locations::tests`; verify current suffix cases fail.
-- [ ] Change the final anchored segment handling inside the segment loop. For that segment compute `name.len().checked_sub(seg.len())`; require `name.ends_with(seg)` and suffix start `>= pos`, plus suffix start `== 0` when it is also the first start-anchored segment. Return that result instead of greedily finding its first occurrence. Earlier segments retain their existing ordered search and start anchoring. Preserve the no-star substring branch and all-star behavior.
-- [ ] Run `cargo test locations::tests`; commit: `fix: match repeated suffixes in location filters`.
+- [x] Run `cargo test locations::tests`; verify current suffix cases fail.
+- [x] Change the final anchored segment handling inside the segment loop. For that segment compute `name.len().checked_sub(seg.len())`; require `name.ends_with(seg)` and suffix start `>= pos`, plus suffix start `== 0` when it is also the first start-anchored segment. Return that result instead of greedily finding its first occurrence. Earlier segments retain their existing ordered search and start anchoring. Preserve the no-star substring branch and all-star behavior.
+- [x] Run `cargo test locations::tests`; commit: `fix: match repeated suffixes in location filters`.
 
 ### Task 5: Bound vault resource-ID matches in usage queries
 
@@ -231,8 +231,8 @@ fn anchored_suffix_uses_final_occurrence_without_overlap() {
 
 **Interfaces:** Extract `fn usage_predicate(uri: &str, vault_id: Option<&str>) -> String` and use it from `find_usage`. Inputs are raw values; the helper owns JSON serialization and KQL escaping exactly once.
 
-- [ ] Add query-construction regressions for a complete ID, descendant IDs, prefix lookalikes, case-insensitive operators, and quotes/backslashes. Test both lookup-present and lookup-absent branches. Keep existing URI behavior within this task's scope.
-- [ ] Use complete serialized JSON string tokens for exact IDs and a quoted prefix ending in `/` for descendants. For ID `/subscriptions/s/resourceGroups/r/providers/Microsoft.KeyVault/vaults/prod`, predicates must search for `"/subscriptions/.../vaults/prod"` or `"/subscriptions/.../vaults/prod/`, never a bare `.../prod` substring. Build the tokens before applying `kql_escape`:
+- [x] Add query-construction regressions for a complete ID, descendant IDs, prefix lookalikes, case-insensitive operators, and quotes/backslashes. Test both lookup-present and lookup-absent branches. Keep existing URI behavior within this task's scope.
+- [x] Use complete serialized JSON string tokens for exact IDs and a quoted prefix ending in `/` for descendants. For ID `/subscriptions/s/resourceGroups/r/providers/Microsoft.KeyVault/vaults/prod`, predicates must search for `"/subscriptions/.../vaults/prod"` or `"/subscriptions/.../vaults/prod/`, never a bare `.../prod` substring. Build the tokens before applying `kql_escape`:
 
 ```rust
 let exact = serde_json::to_string(id).expect("serializing a string cannot fail");
@@ -245,9 +245,9 @@ let id_predicate = format!(
 );
 ```
 
-- [ ] Before implementing, run `cargo test search::tests` with the new expected-query tests and confirm failure. After implementing, check serialized fixtures for exact `prod`, `prod/keys/k`, `prod-old`, `production`, and another resource group; only the first two must match ID tokens. Include a fixture with casing differences by applying the same case-insensitive comparison as KQL `contains` in the local token test.
-- [ ] Ensure the production query still excludes vault resources, retains its projection/order, and leaves URI discovery available when the vault ID cannot be found. Parenthesize the OR predicate where composed with other filters.
-- [ ] Run `cargo test search::tests`; commit: `fix: bound vault IDs in usage search`.
+- [x] Before implementing, run `cargo test search::tests` with the new expected-query tests and confirm failure. After implementing, check serialized fixtures for exact `prod`, `prod/keys/k`, `prod-old`, `production`, and another resource group; only the first two must match ID tokens. Include a fixture with casing differences by applying the same case-insensitive comparison as KQL `contains` in the local token test.
+- [x] Ensure the production query still excludes vault resources, retains its projection/order, and leaves URI discovery available when the vault ID cannot be found. Parenthesize the OR predicate where composed with other filters.
+- [x] Run `cargo test search::tests`; commit: `fix: bound vault IDs in usage search`.
 
 **Validation limit:** Offline tests verify token semantics and escaping, not Azure's KQL execution. If an authorized read-only test subscription is available, run a usage query against similarly named vault references; otherwise record the live-query gap in the PR.
 
@@ -259,13 +259,38 @@ Execute [the live test runbook](2026-09-26-review-remediation-live-tests.md) aga
 
 **Files:** Modify `Cargo.toml`, `Cargo.lock`, `CHANGELOG.md`; review all changed files.
 
-- [ ] Run `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, and `cargo test`. Confirm regression tests exercise production helpers and mutation ordering, not duplicate unused implementations.
-- [ ] Bump `0.3.3` to `0.3.4` if no intervening release has landed. These fixes reject unsafe/invalid inputs and restore intended behavior without redesigning supported commands. Update only the local package entry in the lockfile through Cargo; avoid unrelated dependency updates.
-- [ ] Add a dated `0.3.4` changelog entry naming all five fixes. Document migration destination reuse and rejection behavior. Do not describe the URL finding as proven credential exfiltration.
-- [ ] Run `cargo build --release --locked` and `cargo audit` (or the corresponding `just` tasks). If registry/advisory access is unavailable, report that check as unverified rather than passed.
-- [ ] Review the final diff against all five acceptance rows, then commit `chore: release v0.3.4`. Perform a fresh code review before presenting the implementation as ready.
+- [x] Run `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, and `cargo test`. Confirm regression tests exercise production helpers and mutation ordering, not duplicate unused implementations.
+- [x] Bump `0.3.3` to `0.3.4` if no intervening release has landed. These fixes reject unsafe/invalid inputs and restore intended behavior without redesigning supported commands. Update only the local package entry in the lockfile through Cargo; avoid unrelated dependency updates.
+- [x] Add a dated `0.3.4` changelog entry naming all five fixes. Document migration destination reuse and rejection behavior. Do not describe the URL finding as proven credential exfiltration.
+- [x] Run `cargo build --release --locked` and `cargo audit` (or the corresponding `just` tasks). If registry/advisory access is unavailable, report that check as unverified rather than passed.
+- [x] Review the final diff against all five acceptance rows, then commit `chore: release v0.3.4`. Perform a fresh code review before presenting the implementation as ready.
 - [ ] If publishing is requested, create the public tracking issue first, then a PR referencing it with behavior changes, regression coverage, and validation limitations. Do not merge or publish a release as part of planning.
 
 ## Completion Criteria
 
 All five findings have regression coverage; existing destination configuration receives no migration PUT; same-vault requests fail before writes; formatting, lint, tests, release build, and dependency audit are accounted for. Public release metadata stays synchronized. Required validation uses no live Azure mutations, and any unperformed live query verification is clearly reported.
+
+## Execution record — 2026-09-28
+
+Implemented on `fix/review-remediation` from `f39e5ae`, including the user-requested Rust 2024 prerequisite. Local release version is `0.3.4`; nothing has been pushed, merged, or published.
+
+Validation completed:
+
+- 62 offline unit tests pass with both Rust 1.95 stable and the declared Rust 1.88 minimum.
+- `cargo fmt --check`, `cargo clippy --locked --offline --all-targets -- -D warnings`, and `cargo build --release --locked --offline` pass.
+- `cargo audit` passes with no findings after updating flagged dependencies.
+- Release-binary checks pass for version output, bare-invocation help with a subscription environment, both same-vault migration guards, and a malformed vault endpoint.
+- A fresh whole-branch review found no actionable findings.
+- Live Azure tests remain pending sandbox subscription, region, principal, and runner CIDR inputs; no live resources were created.
+
+Implementation decisions and limits:
+
+- Retained the Rust 1.88 minimum after testing the Rust 2024 edition on that compiler; replaced shared environment mutation with per-parser configuration. Risk addressed: help behavior under an existing subscription environment.
+- Destination selection returns a named action and accepts dry-run mode instead of returning unused JSON plus a boolean. This keeps dry-run and write decisions under the same tested control flow. Risk addressed: selecting or reporting the wrong destination action.
+- Updated `rustls`, `event-listener`, and `chacha20`, with necessary transitive changes, because the baseline lockfile failed the current audit. Risk addressed: dependency regressions, checked by the suite, minimum compiler, and release build.
+- Deferred live cloud validation until the requested environment inputs are supplied. Remaining risk: real Azure permissions, provisioning, and Resource Graph serialization are not yet verified by this run.
+- The review confirmed the documented concurrent GET/PUT provisioning race and recreate retry version behavior remain outside these fixes. Coordinate provisioning and inspect partial migrations before retrying.
+- Full-URL ARM vault migration and sovereign-cloud usage discovery remain pre-existing limitations; this patch does not expand those commands.
+- Builds on non-macOS release platforms were not run locally; the existing release matrix remains the platform validation gate.
+
+No minor review findings were deferred. Integration and live-test execution are subsequent actions.
