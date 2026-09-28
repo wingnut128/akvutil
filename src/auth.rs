@@ -109,6 +109,14 @@ impl Context {
     }
 }
 
+/// Reject migrations into the source before either endpoint is used.
+pub fn ensure_distinct_vaults(source: &str, target: &str) -> Result<()> {
+    if Context::vault_uri(source)? == Context::vault_uri(target)? {
+        bail!("source and target must identify different vaults");
+    }
+    Ok(())
+}
+
 /// Azure Key Vault naming rule: 3-24 characters, alphanumerics and hyphens.
 fn is_valid_vault_name(name: &str) -> bool {
     (3..=24).contains(&name.len()) && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
@@ -117,6 +125,15 @@ fn is_valid_vault_name(name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn migration_requires_distinct_endpoints() {
+        assert!(ensure_distinct_vaults("myvault", "myvault").is_err());
+        assert!(ensure_distinct_vaults("myvault", "https://MYVAULT.vault.azure.net/").is_err());
+        assert!(ensure_distinct_vaults("myvault", "othervault").is_ok());
+        assert!(ensure_distinct_vaults("https://myvault.vault.azure.cn", "myvault").is_ok());
+        assert!(ensure_distinct_vaults("bad/name", "othervault").is_err());
+    }
 
     #[test]
     fn rejects_url_structure_disguised_as_vault_host() {

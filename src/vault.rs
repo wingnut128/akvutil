@@ -100,6 +100,7 @@ pub async fn show(
 }
 
 pub async fn migrate(ctx: &Context, args: &VaultMigrateArgs, fmt: OutputFormat) -> Result<()> {
+    crate::auth::ensure_distinct_vaults(&args.source, &args.target)?;
     // 1. Read the source vault so the target can inherit its shape.
     let source = arm::get_vault(ctx, &args.source, &args.source_rg).await?;
     let src_location = source
@@ -207,4 +208,44 @@ pub async fn migrate(ctx: &Context, args: &VaultMigrateArgs, fmt: OutputFormat) 
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser as _;
+
+    #[tokio::test]
+    async fn same_vault_migration_is_rejected_before_io() {
+        let ctx = Context::new(None).unwrap();
+        let cli = crate::Cli::try_parse_from([
+            "akvutil",
+            "vault",
+            "migrate",
+            "--source",
+            "myvault",
+            "--source-rg",
+            "rg",
+            "--target",
+            "MYVAULT",
+            "--target-rg",
+            "rg",
+        ])
+        .unwrap();
+        let Some(crate::Command::Vault(crate::VaultCommand::Migrate(mut args))) = cli.command
+        else {
+            panic!("expected migration");
+        };
+        for strategy in [
+            crate::MigrateStrategy::BackupRestore,
+            crate::MigrateStrategy::Recreate,
+        ] {
+            for dry_run in [false, true] {
+                args.strategy = strategy;
+                args.dry_run = dry_run;
+                let error = migrate(&ctx, &args, OutputFormat::Json).await.unwrap_err();
+                assert!(error.to_string().contains("different vaults"), "{error:#}");
+            }
+        }
+    }
 }
