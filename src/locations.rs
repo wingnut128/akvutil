@@ -22,20 +22,20 @@ pub fn name_matches(pattern: &str, name: &str) -> bool {
 
     let mut pos = 0;
     for (i, seg) in segments.iter().enumerate() {
+        if anchored_end && i + 1 == segments.len() {
+            // The final literal must match the suffix, not its first occurrence.
+            // It cannot overlap any literal already consumed by the prefix.
+            return name.len().checked_sub(seg.len()).is_some_and(|start| {
+                name.ends_with(seg) && start >= pos && !(i == 0 && anchored_start && start != 0)
+            });
+        }
         match name[pos..].find(seg) {
             Some(offset) if i == 0 && anchored_start && offset != 0 => return false,
             Some(offset) => pos = pos + offset + seg.len(),
             None => return false,
         }
     }
-    if anchored_end {
-        match segments.last() {
-            Some(last) => name.ends_with(last) && pos == name.len(),
-            None => false, // pattern was only `*`s with anchored end: unreachable
-        }
-    } else {
-        true
-    }
+    true
 }
 
 /// Project one ARM location entry into an output row. Logical regions (e.g.
@@ -104,6 +104,32 @@ pub async fn list(ctx: &Context, name: Option<&str>, fmt: OutputFormat) -> Resul
 mod tests {
     use super::{name_matches, to_row};
     use serde_json::json;
+
+    #[test]
+    fn anchored_suffix_uses_final_occurrence_without_overlap() {
+        for (pattern, name, expected) in [
+            ("*south", "southafricasouth", true),
+            ("*a", "eastasia", true),
+            ("south*south", "southafricasouth", true),
+            ("a*a", "a", false),
+            ("ab*bc", "abc", false),
+            ("a*a", "aba", true),
+            ("east*a", "eastasia", true),
+            ("west*a", "eastasia", false),
+            ("**SOUTH", "southafricasouth", true),
+            ("***", "eastasia", true),
+            ("*south", "southafrica", false),
+            ("*longer", "a", false),
+            ("**", "", true),
+            ("*é", "québecé", true),
+        ] {
+            assert_eq!(
+                name_matches(pattern, name),
+                expected,
+                "{pattern:?} against {name:?}"
+            );
+        }
+    }
 
     #[test]
     fn plain_pattern_is_substring_case_insensitive() {
