@@ -5,6 +5,30 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.4] - 2026-09-28
+
+### Fixed
+
+- Vault migrations reuse compatible existing targets without overwriting
+  permissions, RBAC mode, network settings, tags, or service-access settings;
+  only HTTP 404 permits target creation, including destination lookup in dry runs.
+- Key and vault migrations reject equivalent source and destination vaults
+  before any requests or writes, including dry runs.
+- Vault endpoints are validated against their parsed hostname; query, fragment,
+  userinfo, port, and other URL structure cannot bypass the Azure host allowlist.
+- Region filters match repeated suffixes correctly (for example, `*south`
+  includes `southafricasouth`).
+- Usage search requires a complete vault resource ID or descendant path,
+  excluding other vaults whose names share the same prefix.
+
+- Update locked TLS and async dependencies to resolve RustSec advisories
+  RUSTSEC-2026-0285 and RUSTSEC-2026-0221 and a yanked chacha20 release.
+
+### Changed
+
+- Migrate to Rust 2024, retaining the Rust 1.88 minimum. Help tests no longer
+  mutate the process environment shared by concurrent tests.
+
 ## [0.3.3] - 2026-07-09
 
 ### Added
