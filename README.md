@@ -10,7 +10,7 @@ Authentication uses `DeveloperToolsCredential` (Azure CLI / Azure Developer CLI 
 
 ## Build
 
-Uses Rust 2024; requires Rust 1.88+.
+Uses Rust 2024; requires Rust 1.98.1+. `rust-toolchain.toml` selects Rust 1.98.1 with rustfmt and Clippy for local development and CI.
 
 ```
 cargo build --release

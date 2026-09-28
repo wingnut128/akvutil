@@ -61,10 +61,9 @@ jobs:
           sudo docker image prune -af >/dev/null 2>&1
           df -h / | tail -1
 
-      - name: Install Rust stable
+      - name: Install project Rust toolchain
         run: |
-          rustup update stable
-          rustup default stable
+          rustup show active-toolchain
           rustup target add ${{ matrix.target }}
 
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -73,7 +72,7 @@ jobs:
             ~/.cargo/registry/
             ~/.cargo/git/
             target/
-          key: release-${{ matrix.target }}-${{ hashFiles('**/Cargo.lock') }}
+          key: release-${{ matrix.target }}-${{ hashFiles('**/Cargo.lock', 'rust-toolchain.toml') }}
           restore-keys: release-${{ matrix.target }}-
 
       - name: Validate tag format

@@ -6,7 +6,7 @@
 
 **Architecture:** Keep fixes in the existing domain modules. Canonicalize endpoints centrally, guard migrations before writes, and separate destination lookup from creation so retries preserve configuration. Extract small pure query and decision helpers for offline regression coverage.
 
-**Tech Stack:** Rust 2024, Rust 1.88+, anyhow, reqwest, serde_json, Azure SDK 1.0, built-in Rust tests.
+**Tech Stack:** Rust 2024, Rust 1.98.1+, anyhow, reqwest, serde_json, Azure SDK 1.0, built-in Rust tests.
 
 **Spec:** The acceptance contract below records the five reviewed findings and is the specification for this plan. Baseline: `f39e5ae`, version `0.3.3`; all 45 unit tests, rustfmt, and Clippy passed during review.
 
@@ -56,7 +56,7 @@ Use one implementation branch and one PR with five focused fix commits and a fin
 
 ---
 
-Rust 2024 migration is a prerequisite added at the user’s request on 2026-09-28; keep the Rust 1.88 minimum and remove process-wide environment mutation from the help test.
+Rust 2024 migration is a prerequisite added at the user’s request on 2026-09-28; remove process-wide environment mutation from the help test. The initial Rust 1.88 minimum was subsequently raised to 1.98.1 at the user’s request.
 
 ### Task 1: Parse and canonicalize vault endpoints
 
@@ -294,3 +294,15 @@ Implementation decisions and limits:
 - Builds on non-macOS release platforms were not run locally; the existing release matrix remains the platform validation gate.
 
 No minor review findings were deferred. Integration and live-test execution are subsequent actions.
+
+### Toolchain follow-up — 2026-09-28
+
+The user requested a compiler newer than 1.88, preferably 1.98. The minimum
+and pinned project toolchain are now Rust 1.98.1, which includes the vtable
+miscompilation fix for 1.98.0. Local builds, CI, and release jobs use
+`rust-toolchain.toml`. The earlier 1.88 validation above is historical and
+no longer describes the supported minimum.
+
+Rust 1.98.1 follow-up validation: all 62 tests, formatting, Clippy, and the
+locked release build pass. See [the handoff](2026-09-28-remediation-handoff.md)
+for the resume checkpoint and pending live-test inputs.

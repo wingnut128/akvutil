@@ -2,7 +2,7 @@
 name = "akvutil"
 version = "0.3.4"
 edition = "2024"
-rust-version = "1.88"
+rust-version = "1.98.1"
 description = "Azure Key Vault utility: create/migrate vaults and keys, discover resources that use them"
 license = "MIT"
 

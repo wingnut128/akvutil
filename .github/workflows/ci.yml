@@ -28,11 +28,9 @@ jobs:
 
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
-      - name: Install Rust stable
+      - name: Install project Rust toolchain
         run: |
-          rustup update stable
-          rustup default stable
-          rustup component add rustfmt clippy
+          rustup show active-toolchain
 
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -40,7 +38,7 @@ jobs:
             ~/.cargo/registry/
             ~/.cargo/git/
             target/
-          key: ci-${{ hashFiles('**/Cargo.lock') }}
+          key: ci-${{ hashFiles('**/Cargo.lock', 'rust-toolchain.toml') }}
           restore-keys: ci-
 
       - name: Format check
@@ -72,10 +70,9 @@ jobs:
 
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
-      - name: Install Rust stable
+      - name: Install project Rust toolchain
         run: |
-          rustup update stable
-          rustup default stable
+          rustup show active-toolchain
 
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -83,7 +80,7 @@ jobs:
             ~/.cargo/registry/
             ~/.cargo/git/
             ~/.cargo/bin/
-          key: audit-${{ hashFiles('**/Cargo.lock') }}
+          key: audit-${{ hashFiles('**/Cargo.lock', 'rust-toolchain.toml') }}
           restore-keys: audit-
 
       - name: Install cargo-audit

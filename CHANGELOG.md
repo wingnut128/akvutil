@@ -26,7 +26,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Migrate to Rust 2024, retaining the Rust 1.88 minimum. Help tests no longer
+- Migrate to Rust 2024 and require Rust 1.98.1 or newer. Pin the development
+  and CI toolchain to 1.98.1. Help tests no longer
   mutate the process environment shared by concurrent tests.
 
 ## [0.3.3] - 2026-07-09
