@@ -3,13 +3,13 @@
 //! servers, VMs with ADE, App Services with key vault references, etc.).
 
 use anyhow::Result;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
+use crate::OutputFormat;
+use crate::ResourceType;
 use crate::arm;
 use crate::auth::Context;
 use crate::output;
-use crate::OutputFormat;
-use crate::ResourceType;
 
 /// Escape a value for embedding in a single-quoted KQL string literal. KQL
 /// uses backslash escaping, so the backslash must be escaped *before* the
@@ -63,15 +63,11 @@ impl ResourceType {
     /// Source table + type filter for this resource type.
     fn branch(self) -> &'static str {
         match self {
-            ResourceType::Keyvault => {
-                "Resources | where type =~ 'microsoft.keyvault/vaults'"
-            }
+            ResourceType::Keyvault => "Resources | where type =~ 'microsoft.keyvault/vaults'",
             ResourceType::Storage => {
                 "Resources | where type =~ 'microsoft.storage/storageaccounts'"
             }
-            ResourceType::Des => {
-                "Resources | where type =~ 'microsoft.compute/diskencryptionsets'"
-            }
+            ResourceType::Des => "Resources | where type =~ 'microsoft.compute/diskencryptionsets'",
             ResourceType::Rg => {
                 "ResourceContainers | where type =~ 'microsoft.resources/subscriptions/resourcegroups'"
             }

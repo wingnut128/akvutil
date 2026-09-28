@@ -2,10 +2,10 @@
 //! from ARM so the list always reflects what the subscription can use.
 
 use anyhow::Result;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::auth::Context;
-use crate::{arm, output, OutputFormat};
+use crate::{OutputFormat, arm, output};
 
 /// Case-insensitive glob match with the same pattern semantics as `search`:
 /// no `*` is a substring match; `*` wildcards anchor (`foo*` prefix, `*foo`
@@ -162,11 +162,13 @@ mod tests {
 
     #[test]
     fn logical_regions_are_skipped() {
-        assert!(to_row(&json!({
-            "name": "unitedstates",
-            "displayName": "United States",
-            "metadata": { "regionType": "Logical" },
-        }))
-        .is_none());
+        assert!(
+            to_row(&json!({
+                "name": "unitedstates",
+                "displayName": "United States",
+                "metadata": { "regionType": "Logical" },
+            }))
+            .is_none()
+        );
     }
 }

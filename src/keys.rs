@@ -3,13 +3,13 @@
 
 use std::time::Duration;
 
-use anyhow::{bail, Context as _, Result};
+use anyhow::{Context as _, Result, bail};
 use azure_security_keyvault_keys::{
+    KeyClient, ResourceExt as _,
     models::{
         CreateKeyParameters, CurveName, KeyAttributes, KeyRotationPolicy, KeyRotationPolicyAction,
         KeyType, LifetimeAction, LifetimeActionTrigger, LifetimeActionType, RestoreKeyParameters,
     },
-    KeyClient, ResourceExt as _,
 };
 use futures::TryStreamExt;
 use serde_json::json;

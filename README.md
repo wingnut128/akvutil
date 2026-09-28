@@ -10,7 +10,7 @@ Authentication uses `DeveloperToolsCredential` (Azure CLI / Azure Developer CLI 
 
 ## Build
 
-Requires Rust 1.88+.
+Uses Rust 2024; requires Rust 1.88+.
 
 ```
 cargo build --release

@@ -426,10 +426,10 @@ fn parse_ip_rule(s: &str) -> Result<String, String> {
     if ip.parse::<std::net::Ipv4Addr>().is_err() {
         return Err(format!("invalid IPv4 address '{s}'"));
     }
-    if let Some(p) = prefix {
-        if !p.parse::<u8>().is_ok_and(|n| n <= 32) {
-            return Err(format!("invalid CIDR prefix in '{s}' (expected /0-/32)"));
-        }
+    if let Some(p) = prefix
+        && !p.parse::<u8>().is_ok_and(|n| n <= 32)
+    {
+        return Err(format!("invalid CIDR prefix in '{s}' (expected /0-/32)"));
     }
     Ok(s.to_string())
 }
@@ -511,20 +511,13 @@ mod tests {
 
     #[test]
     fn bare_invocation_shows_help() {
-        // An env-provided --subscription counts as "args present", which
-        // suppresses arg_required_else_help; clear it so the test is
-        // deterministic regardless of the local shell environment.
-        let prev = std::env::var_os("AZURE_SUBSCRIPTION_ID");
-        std::env::remove_var("AZURE_SUBSCRIPTION_ID");
-        // `unwrap_err()` would require `Cli: Debug`; match instead to avoid
-        // adding Debug derives across every CLI type.
-        let err = match super::Cli::try_parse_from(["akvutil"]) {
-            Err(err) => err,
-            Ok(_) => panic!("expected parse error on bare invocation"),
-        };
-        if let Some(v) = prev {
-            std::env::set_var("AZURE_SUBSCRIPTION_ID", v);
-        }
+        use clap::CommandFactory as _;
+        // Ignore the subscription environment for this parser instance without
+        // mutating the process environment shared by concurrent tests.
+        let err = super::Cli::command()
+            .mut_arg("subscription", |arg| arg.env(None::<&str>))
+            .try_get_matches_from(["akvutil"])
+            .unwrap_err();
         assert_eq!(
             err.kind(),
             clap::error::ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand

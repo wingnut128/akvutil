@@ -7,9 +7,9 @@
 
 use std::time::Duration;
 
-use anyhow::{bail, Context as _, Result};
-use percent_encoding::{utf8_percent_encode, AsciiSet, NON_ALPHANUMERIC};
-use serde_json::{json, Value};
+use anyhow::{Context as _, Result, bail};
+use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, utf8_percent_encode};
+use serde_json::{Value, json};
 
 use crate::auth::Context;
 

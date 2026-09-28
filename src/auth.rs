@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use anyhow::{bail, Context as _, Result};
+use anyhow::{Context as _, Result, bail};
 use azure_core::credentials::TokenCredential;
 use azure_identity::DeveloperToolsCredential;
 
