@@ -306,3 +306,7 @@ no longer describes the supported minimum.
 Rust 1.98.1 follow-up validation: all 62 tests, formatting, Clippy, and the
 locked release build pass. See [the handoff](2026-09-28-remediation-handoff.md)
 for the resume checkpoint and pending live-test inputs.
+
+### Live validation follow-up — 2026-09-28
+
+The user authorized sandbox execution in `centralus` with no Managed HSM. All live-test phases passed against `d4c2225`, including actual Resource Graph prefix boundaries, both migration strategies, destination configuration preservation, rotation, dry runs and negative cases. No application changes were needed. The disposable resource group and three test role assignments were removed; five soft-deleted vaults expire on October 5. Activity Log returned no events, so no-PUT evidence remains the offline tests plus unchanged live configuration snapshots. See [the live validation report](2026-09-28-remediation-live-results.md).

@@ -2,7 +2,7 @@
 
 **Purpose:** Exercise the patched CLI end to end against disposable Azure resources, including every finding in [the implementation plan](2026-09-26-review-remediation.md).
 
-**Status:** Planned, not executed. No resources have been created. Build the patched branch before running this routine; do not use the installed `akvutil` accidentally.
+**Status:** Executed successfully on 2026-09-28; scoped cleanup completed. See [the live validation report](2026-09-28-remediation-live-results.md) for results and evidence limits. For future runs, build the patched branch before running this routine; do not use the installed `akvutil` accidentally.
 
 ## Execution Contract
 
