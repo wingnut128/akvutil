@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use anyhow::{bail, Context as _, Result};
+use anyhow::{Context as _, Result, bail};
 use azure_core::credentials::TokenCredential;
 use azure_identity::DeveloperToolsCredential;
 
@@ -77,12 +77,19 @@ impl Context {
             }
         };
 
-        let host_lc = host.to_ascii_lowercase();
-        let is_vault_host = !host.contains('/')
-            && !host.contains('@')
-            && !host.contains(':')
-            && VAULT_SUFFIXES.iter().any(|s| host_lc.ends_with(s));
-        if !is_vault_host {
+        // Reject URL structure before parsing: URL normalization can discard
+        // controls, collapse paths, or hide an explicit default port.
+        if host.chars().any(|c| c.is_control() || c.is_whitespace())
+            || host.contains(['/', '@', ':', '?', '#', '\\'])
+        {
+            bail!(
+                "invalid vault endpoint '{vault}': expected an HTTPS host without URL components"
+            );
+        }
+        let url = reqwest::Url::parse(&format!("https://{host}"))
+            .context("invalid vault endpoint URL")?;
+        let host = url.host_str().context("vault endpoint has no host")?;
+        if !VAULT_SUFFIXES.iter().any(|suffix| host.ends_with(suffix)) {
             bail!(
                 "refusing to use vault endpoint '{vault}': host must be an Azure Key \
                  Vault domain (e.g. *.vault.azure.net)"
@@ -102,6 +109,14 @@ impl Context {
     }
 }
 
+/// Reject migrations into the source before either endpoint is used.
+pub fn ensure_distinct_vaults(source: &str, target: &str) -> Result<()> {
+    if Context::vault_uri(source)? == Context::vault_uri(target)? {
+        bail!("source and target must identify different vaults");
+    }
+    Ok(())
+}
+
 /// Azure Key Vault naming rule: 3-24 characters, alphanumerics and hyphens.
 fn is_valid_vault_name(name: &str) -> bool {
     (3..=24).contains(&name.len()) && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
@@ -110,6 +125,49 @@ fn is_valid_vault_name(name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn migration_requires_distinct_endpoints() {
+        assert!(ensure_distinct_vaults("myvault", "myvault").is_err());
+        assert!(ensure_distinct_vaults("myvault", "https://MYVAULT.vault.azure.net/").is_err());
+        assert!(ensure_distinct_vaults("myvault", "othervault").is_ok());
+        assert!(ensure_distinct_vaults("https://myvault.vault.azure.cn", "myvault").is_ok());
+        assert!(ensure_distinct_vaults("bad/name", "othervault").is_err());
+    }
+
+    #[test]
+    fn rejects_url_structure_disguised_as_vault_host() {
+        for bad in [
+            "https://attacker.example?.vault.azure.net",
+            "https://attacker.example#.vault.azure.net",
+            "https://foo.vault.azure.net?x=1",
+            "https://foo.vault.azure.net#x",
+            "https://foo.vault.azure.net:443",
+            "https://user@foo.vault.azure.net",
+            r"https://attacker.example\.vault.azure.net",
+            "https://foo.vault.azure.net/keys",
+            "https://foo.vault.azure.net/keys/..",
+            "https://foo.vault.azure.net\n",
+            "https://fo\to.vault.azure.net",
+            "https://%61ttacker.example%23.vault.azure.net",
+        ] {
+            assert!(Context::vault_uri(bad).is_err(), "accepted {bad:?}");
+        }
+    }
+
+    #[test]
+    fn canonicalizes_equivalent_endpoints() {
+        for input in ["MyVault", "https://MYVAULT.vault.azure.net/"] {
+            assert_eq!(
+                Context::vault_uri(input).unwrap(),
+                "https://myvault.vault.azure.net"
+            );
+        }
+        for suffix in VAULT_SUFFIXES {
+            let endpoint = format!("https://myvault{suffix}");
+            assert_eq!(Context::vault_uri(&endpoint).unwrap(), endpoint);
+        }
+    }
 
     #[test]
     fn accepts_bare_name_and_known_hosts() {

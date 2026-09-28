@@ -1,8 +1,8 @@
 //! Parsing of user-supplied durations (Key Vault rotation policies use
 //! ISO-8601 durations) and timestamps (key expiry / not-before).
 
-use anyhow::{bail, Context as _, Result};
-use azure_core::time::{parse_rfc3339, Duration, OffsetDateTime};
+use anyhow::{Context as _, Result, bail};
+use azure_core::time::{Duration, OffsetDateTime, parse_rfc3339};
 
 /// Split "<digits><unit-char>" shorthand; returns (n, lowercase unit).
 fn split_shorthand(s: &str) -> Option<(u32, char)> {

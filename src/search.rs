@@ -3,13 +3,13 @@
 //! servers, VMs with ADE, App Services with key vault references, etc.).
 
 use anyhow::Result;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
+use crate::OutputFormat;
+use crate::ResourceType;
 use crate::arm;
 use crate::auth::Context;
 use crate::output;
-use crate::OutputFormat;
-use crate::ResourceType;
 
 /// Escape a value for embedding in a single-quoted KQL string literal. KQL
 /// uses backslash escaping, so the backslash must be escaped *before* the
@@ -63,15 +63,11 @@ impl ResourceType {
     /// Source table + type filter for this resource type.
     fn branch(self) -> &'static str {
         match self {
-            ResourceType::Keyvault => {
-                "Resources | where type =~ 'microsoft.keyvault/vaults'"
-            }
+            ResourceType::Keyvault => "Resources | where type =~ 'microsoft.keyvault/vaults'",
             ResourceType::Storage => {
                 "Resources | where type =~ 'microsoft.storage/storageaccounts'"
             }
-            ResourceType::Des => {
-                "Resources | where type =~ 'microsoft.compute/diskencryptionsets'"
-            }
+            ResourceType::Des => "Resources | where type =~ 'microsoft.compute/diskencryptionsets'",
             ResourceType::Rg => {
                 "ResourceContainers | where type =~ 'microsoft.resources/subscriptions/resourcegroups'"
             }
@@ -164,26 +160,43 @@ pub async fn find_vault_id(ctx: &Context, name: &str) -> Result<Option<String>> 
         .map(String::from))
 }
 
+/// Match a whole JSON string value or a descendant path, not a vault-name prefix.
+fn vault_id_tokens(id: &str) -> [String; 2] {
+    let exact = serde_json::to_string(id).expect("serializing a string cannot fail");
+    let mut child =
+        serde_json::to_string(&format!("{id}/")).expect("serializing a string cannot fail");
+    child.pop(); // Descendants continue after the slash, before the closing quote.
+    [exact, child]
+}
+
+fn usage_predicate(uri: &str, vault_id: Option<&str>) -> String {
+    let mut predicate = format!("tostring(properties) contains '{}'", kql_escape(uri));
+    if let Some(id) = vault_id {
+        for token in vault_id_tokens(id) {
+            predicate.push_str(&format!(
+                " or tostring(properties) contains '{}'",
+                kql_escape(&token)
+            ));
+        }
+    }
+
+    predicate
+}
+
 /// Resources whose properties reference the vault by URI or resource ID.
 pub async fn find_usage(ctx: &Context, vault: &str) -> Result<Vec<Value>> {
     let name = Context::vault_name(vault);
     // Match on the full scheme-qualified host so that vault `foo` does not also
     // match references to `barfoo.vault.azure.net`.
-    let uri = format!("https://{}.vault.azure.net", kql_escape(&name));
+    let uri = format!("https://{name}.vault.azure.net");
     let vault_id = find_vault_id(ctx, &name).await?;
 
-    let mut predicate = format!("tostring(properties) contains '{uri}'");
-    if let Some(id) = &vault_id {
-        predicate.push_str(&format!(
-            " or tostring(properties) contains '{}'",
-            kql_escape(id)
-        ));
-    }
+    let predicate = usage_predicate(&uri, vault_id.as_deref());
 
     let kql = format!(
         "Resources \
          | where type !~ 'microsoft.keyvault/vaults' \
-         | where {predicate} \
+         | where ({predicate}) \
          | project name, type, resourceGroup, subscriptionId, location, id \
          | order by type asc, name asc"
     );
@@ -221,7 +234,56 @@ pub async fn usage(ctx: &Context, vault: &str, fmt: OutputFormat) -> Result<()> 
 #[cfg(test)]
 mod tests {
     use super::{build_search_query, kql_escape, name_predicate};
+    use super::{usage_predicate, vault_id_tokens};
     use crate::ResourceType;
+
+    #[test]
+    fn usage_query_bounds_resource_ids_and_keeps_uri_fallback() {
+        assert_eq!(
+            usage_predicate("https://prod.vault.azure.net", None),
+            "tostring(properties) contains 'https://prod.vault.azure.net'"
+        );
+        assert_eq!(
+            usage_predicate("https://prod.vault.azure.net", Some("/vaults/prod")),
+            "tostring(properties) contains 'https://prod.vault.azure.net' or tostring(properties) contains '\"/vaults/prod\"' or tostring(properties) contains '\"/vaults/prod/'"
+        );
+    }
+
+    #[test]
+    fn usage_id_tokens_exclude_other_vaults() {
+        let tokens = vault_id_tokens(
+            "/subscriptions/s/resourceGroups/r/providers/Microsoft.KeyVault/vaults/prod",
+        );
+        for (group, name, expected) in [
+            ("r", "prod", true),
+            ("r", "prod/keys/key", true),
+            ("R", "PROD", true),
+            ("r", "prod-old", false),
+            ("r", "production", false),
+            ("other", "prod", false),
+        ] {
+            let properties = serde_json::json!({"sourceVault": {"id": format!(
+                "/subscriptions/s/resourceGroups/{group}/providers/Microsoft.KeyVault/vaults/{name}"
+            )}})
+            .to_string()
+            .to_lowercase();
+            assert_eq!(
+                tokens
+                    .iter()
+                    .any(|t| properties.contains(&t.to_lowercase())),
+                expected,
+                "unexpected match for {group}/{name}"
+            );
+        }
+    }
+
+    #[test]
+    fn usage_predicate_escapes_json_then_kql_once() {
+        assert_eq!(
+            usage_predicate("u'\\", Some("/v/a'\\\"b")),
+            r#"tostring(properties) contains 'u\'\\' or tostring(properties) contains '"/v/a\'\\\\\\"b"' or tostring(properties) contains '"/v/a\'\\\\\\"b/'"#
+        );
+    }
 
     #[test]
     fn escapes_backslash_before_quote() {

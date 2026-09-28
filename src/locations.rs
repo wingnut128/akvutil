@@ -2,10 +2,10 @@
 //! from ARM so the list always reflects what the subscription can use.
 
 use anyhow::Result;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::auth::Context;
-use crate::{arm, output, OutputFormat};
+use crate::{OutputFormat, arm, output};
 
 /// Case-insensitive glob match with the same pattern semantics as `search`:
 /// no `*` is a substring match; `*` wildcards anchor (`foo*` prefix, `*foo`
@@ -22,20 +22,20 @@ pub fn name_matches(pattern: &str, name: &str) -> bool {
 
     let mut pos = 0;
     for (i, seg) in segments.iter().enumerate() {
+        if anchored_end && i + 1 == segments.len() {
+            // The final literal must match the suffix, not its first occurrence.
+            // It cannot overlap any literal already consumed by the prefix.
+            return name.len().checked_sub(seg.len()).is_some_and(|start| {
+                name.ends_with(seg) && start >= pos && !(i == 0 && anchored_start && start != 0)
+            });
+        }
         match name[pos..].find(seg) {
             Some(offset) if i == 0 && anchored_start && offset != 0 => return false,
             Some(offset) => pos = pos + offset + seg.len(),
             None => return false,
         }
     }
-    if anchored_end {
-        match segments.last() {
-            Some(last) => name.ends_with(last) && pos == name.len(),
-            None => false, // pattern was only `*`s with anchored end: unreachable
-        }
-    } else {
-        true
-    }
+    true
 }
 
 /// Project one ARM location entry into an output row. Logical regions (e.g.
@@ -106,6 +106,32 @@ mod tests {
     use serde_json::json;
 
     #[test]
+    fn anchored_suffix_uses_final_occurrence_without_overlap() {
+        for (pattern, name, expected) in [
+            ("*south", "southafricasouth", true),
+            ("*a", "eastasia", true),
+            ("south*south", "southafricasouth", true),
+            ("a*a", "a", false),
+            ("ab*bc", "abc", false),
+            ("a*a", "aba", true),
+            ("east*a", "eastasia", true),
+            ("west*a", "eastasia", false),
+            ("**SOUTH", "southafricasouth", true),
+            ("***", "eastasia", true),
+            ("*south", "southafrica", false),
+            ("*longer", "a", false),
+            ("**", "", true),
+            ("*é", "québecé", true),
+        ] {
+            assert_eq!(
+                name_matches(pattern, name),
+                expected,
+                "{pattern:?} against {name:?}"
+            );
+        }
+    }
+
+    #[test]
     fn plain_pattern_is_substring_case_insensitive() {
         assert!(name_matches("east", "eastus"));
         assert!(name_matches("EAST", "southeastasia"));
@@ -162,11 +188,13 @@ mod tests {
 
     #[test]
     fn logical_regions_are_skipped() {
-        assert!(to_row(&json!({
-            "name": "unitedstates",
-            "displayName": "United States",
-            "metadata": { "regionType": "Logical" },
-        }))
-        .is_none());
+        assert!(
+            to_row(&json!({
+                "name": "unitedstates",
+                "displayName": "United States",
+                "metadata": { "regionType": "Logical" },
+            }))
+            .is_none()
+        );
     }
 }

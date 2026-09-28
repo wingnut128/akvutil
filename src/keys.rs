@@ -3,13 +3,13 @@
 
 use std::time::Duration;
 
-use anyhow::{bail, Context as _, Result};
+use anyhow::{Context as _, Result, bail};
 use azure_security_keyvault_keys::{
+    KeyClient, ResourceExt as _,
     models::{
         CreateKeyParameters, CurveName, KeyAttributes, KeyRotationPolicy, KeyRotationPolicyAction,
         KeyType, LifetimeAction, LifetimeActionTrigger, LifetimeActionType, RestoreKeyParameters,
     },
-    KeyClient, ResourceExt as _,
 };
 use futures::TryStreamExt;
 use serde_json::json;
@@ -335,6 +335,7 @@ pub async fn migrate_keys(
     strategy: MigrateStrategy,
     dry_run: bool,
 ) -> Result<Vec<String>> {
+    crate::auth::ensure_distinct_vaults(source_vault, target_vault)?;
     let source = client(ctx, source_vault)?;
     let target = client(ctx, target_vault)?;
     let mut report = Vec::new();
@@ -543,6 +544,26 @@ pub async fn rotate(ctx: &Context, vault: &str, name: &str, fmt: OutputFormat) -
 mod tests {
     use super::*;
     use azure_security_keyvault_keys::models::KeyRotationPolicy;
+
+    #[tokio::test]
+    async fn same_vault_migration_is_rejected_before_io() {
+        let ctx = Context::new(None).unwrap();
+        for strategy in [MigrateStrategy::BackupRestore, MigrateStrategy::Recreate] {
+            for dry_run in [false, true] {
+                let error = migrate_keys(
+                    &ctx,
+                    "myvault",
+                    "https://MYVAULT.vault.azure.net/",
+                    &[],
+                    strategy,
+                    dry_run,
+                )
+                .await
+                .expect_err("same-vault migration must be rejected");
+                assert!(error.to_string().contains("different vaults"), "{error:#}");
+            }
+        }
+    }
 
     #[test]
     fn rsa_size_from_modulus() {

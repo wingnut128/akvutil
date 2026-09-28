@@ -28,10 +28,9 @@ jobs:
           # GITHUB_TOKEN env below instead.
           persist-credentials: false
 
-      - name: Install Rust stable
+      - name: Install project Rust toolchain
         run: |
-          rustup update stable
-          rustup default stable
+          rustup show active-toolchain
 
       - name: Run release-plz
         uses: release-plz/action@e8792575c7f2366cf6ff3ccc33ead9ace5b691c7 # v0.5.130
@@ -64,10 +63,9 @@ jobs:
           # GITHUB_TOKEN env below instead.
           persist-credentials: false
 
-      - name: Install Rust stable
+      - name: Install project Rust toolchain
         run: |
-          rustup update stable
-          rustup default stable
+          rustup show active-toolchain
 
       - name: Run release-plz
         uses: release-plz/action@e8792575c7f2366cf6ff3ccc33ead9ace5b691c7 # v0.5.130
