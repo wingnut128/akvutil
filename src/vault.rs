@@ -1,6 +1,6 @@
 //! Vault-level commands: create, show, migrate.
 
-use anyhow::Result;
+use anyhow::{Context as _, Result, bail};
 use serde_json::{Value, json};
 
 use crate::arm::{self, VaultSpec};
@@ -99,6 +99,81 @@ pub async fn show(
     Ok(())
 }
 
+/// Migration may reuse compatible targets, but must never reconfigure them.
+fn validate_existing_target(
+    target: &Value,
+    location: &str,
+    sku: &str,
+    retention_days: u32,
+    purge_protection: bool,
+) -> Result<()> {
+    let unchanged = "migration will not reconfigure an existing destination";
+    for (pointer, expected, field) in [
+        ("/location", location, "location"),
+        ("/properties/sku/name", sku, "SKU"),
+    ] {
+        let actual = target
+            .pointer(pointer)
+            .and_then(Value::as_str)
+            .with_context(|| format!("existing target missing valid {field}; {unchanged}"))?;
+        if !actual.eq_ignore_ascii_case(expected) {
+            bail!("existing target {field} is '{actual}', expected '{expected}'; {unchanged}");
+        }
+    }
+    let retention = target
+        .pointer("/properties/softDeleteRetentionInDays")
+        .and_then(Value::as_u64)
+        .with_context(|| format!("existing target missing valid retention; {unchanged}"))?;
+    if retention < u64::from(retention_days) {
+        bail!(
+            "existing target retention is {retention} days, expected at least {retention_days}; {unchanged}"
+        );
+    }
+    let protected = match target.pointer("/properties/enablePurgeProtection") {
+        None | Some(Value::Null) => false,
+        Some(Value::Bool(enabled)) => *enabled,
+        _ => bail!("existing target has invalid purge protection; {unchanged}"),
+    };
+    if purge_protection && !protected {
+        bail!("existing target requires purge protection to match the source; {unchanged}");
+    }
+    Ok(())
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum TargetAction {
+    Reuse,
+    Create,
+    WouldCreate,
+}
+
+/// Keep the write decision testable independently of ARM transport and auth.
+async fn select_target<L, LF, C, CF, V>(
+    dry_run: bool,
+    lookup: L,
+    create: C,
+    validate: V,
+) -> Result<TargetAction>
+where
+    L: FnOnce() -> LF,
+    LF: std::future::Future<Output = Result<Option<Value>>>,
+    C: FnOnce() -> CF,
+    CF: std::future::Future<Output = Result<Value>>,
+    V: FnOnce(&Value) -> Result<()>,
+{
+    match lookup().await? {
+        Some(target) => {
+            validate(&target)?;
+            Ok(TargetAction::Reuse)
+        }
+        None if dry_run => Ok(TargetAction::WouldCreate),
+        None => {
+            create().await?;
+            Ok(TargetAction::Create)
+        }
+    }
+}
+
 pub async fn migrate(ctx: &Context, args: &VaultMigrateArgs, fmt: OutputFormat) -> Result<()> {
     crate::auth::ensure_distinct_vaults(&args.source, &args.target)?;
     // 1. Read the source vault so the target can inherit its shape.
@@ -131,37 +206,54 @@ pub async fn migrate(ctx: &Context, args: &VaultMigrateArgs, fmt: OutputFormat) 
 
     let mut log: Vec<String> = Vec::new();
 
-    if args.dry_run {
-        log.push(format!(
+    let spec = VaultSpec {
+        name: &args.target,
+        resource_group: &args.target_rg,
+        location: &target_location,
+        sku: &target_sku,
+        rbac: src_rbac,
+        retention_days: src_retention,
+        purge_protection: src_purge,
+        tags: &[],
+        public_network_access: crate::PublicNetworkAccess::Enabled.as_str(),
+        default_action: crate::NetworkAction::Allow.as_str(),
+        bypass: crate::NetworkBypass::AzureServices.as_str(),
+        ip_rules: &[],
+        enabled_for_deployment: false,
+        enabled_for_disk_encryption: false,
+        enabled_for_template_deployment: false,
+    };
+    let action = select_target(
+        args.dry_run,
+        || arm::get_vault_if_exists(ctx, &args.target, &args.target_rg),
+        || arm::create_vault(ctx, &spec),
+        |target| {
+            validate_existing_target(
+                target,
+                &target_location,
+                &target_sku,
+                src_retention,
+                src_purge,
+            )
+        },
+    )
+    .await?;
+    match action {
+        TargetAction::WouldCreate => log.push(format!(
             "[dry-run] would create vault '{}' in rg '{}' ({}, sku {}, rbac {}, retention {}d, purge-protection {})",
             args.target, args.target_rg, target_location, target_sku, src_rbac, src_retention, src_purge
-        ));
-    } else {
-        let spec = VaultSpec {
-            name: &args.target,
-            resource_group: &args.target_rg,
-            location: &target_location,
-            sku: &target_sku,
-            rbac: src_rbac,
-            retention_days: src_retention,
-            purge_protection: src_purge,
-            tags: &[],
-            public_network_access: crate::PublicNetworkAccess::Enabled.as_str(),
-            default_action: crate::NetworkAction::Allow.as_str(),
-            bypass: crate::NetworkBypass::AzureServices.as_str(),
-            ip_rules: &[],
-            enabled_for_deployment: false,
-            enabled_for_disk_encryption: false,
-            enabled_for_template_deployment: false,
-        };
-        arm::create_vault(ctx, &spec).await?;
-        log.push(format!(
-            "created vault '{}' ({}, sku {})",
-            args.target, target_location, target_sku
-        ));
-        // A freshly-created vault isn't immediately usable (DNS + RBAC role
-        // propagation), so wait for its data plane before migrating keys rather
-        // than racing it into a spurious 403.
+        )),
+        TargetAction::Create => log.push(format!(
+            "created vault '{}' ({}, sku {})", args.target, target_location, target_sku
+        )),
+        TargetAction::Reuse => log.push(format!(
+            "{}reusing existing vault '{}' (configuration preserved)",
+            if args.dry_run { "[dry-run] " } else { "" }, args.target
+        )),
+    }
+    if !args.dry_run {
+        // Check both newly created and existing targets without changing their
+        // permissions or network settings when readiness fails.
         keys::wait_until_ready(ctx, &args.target).await?;
         log.push("target vault is ready for key operations".to_string());
     }
@@ -214,6 +306,141 @@ pub async fn migrate(ctx: &Context, args: &VaultMigrateArgs, fmt: OutputFormat) 
 mod tests {
     use super::*;
     use clap::Parser as _;
+
+    fn target_fixture() -> Value {
+        json!({
+            "name": "target", "location": "eastus", "tags": {"env": "locked"},
+            "properties": {
+                "sku": {"family": "A", "name": "standard"},
+                "softDeleteRetentionInDays": 90, "enablePurgeProtection": true,
+                "enableRbacAuthorization": false, "publicNetworkAccess": "Disabled",
+                "accessPolicies": [{"objectId": "operator", "permissions": {"keys": ["get", "list", "restore"]}}],
+                "networkAcls": {"defaultAction": "Deny", "bypass": "None", "ipRules": []},
+                "enabledForDeployment": true, "enabledForDiskEncryption": false,
+                "enabledForTemplateDeployment": true
+            }
+        })
+    }
+
+    fn validate_fixture(target: &Value) -> Result<()> {
+        validate_existing_target(target, "eastus", "standard", 7, false)
+    }
+
+    #[test]
+    fn existing_target_compatibility_preserves_stricter_settings() {
+        let mut target = target_fixture();
+        target["location"] = json!("EASTUS");
+        target["properties"]["sku"]["name"] = json!("Standard");
+        validate_fixture(&target).unwrap();
+        validate_existing_target(&target, "eastus", "standard", 90, true).unwrap();
+        target["properties"]
+            .as_object_mut()
+            .unwrap()
+            .remove("enablePurgeProtection");
+        validate_fixture(&target).unwrap(); // Azure can omit disabled purge protection.
+        assert!(validate_existing_target(&target, "eastus", "standard", 7, true).is_err());
+    }
+
+    #[test]
+    fn incompatible_or_incomplete_targets_are_rejected() {
+        for (pointer, value) in [
+            ("/location", json!("westus")),
+            ("/location", Value::Null),
+            ("/properties/sku/name", json!("premium")),
+            ("/properties/sku/name", Value::Null),
+            ("/properties/softDeleteRetentionInDays", json!(6)),
+            ("/properties/softDeleteRetentionInDays", json!("90")),
+            ("/properties/softDeleteRetentionInDays", Value::Null),
+            ("/properties/enablePurgeProtection", json!("true")),
+        ] {
+            let mut target = target_fixture();
+            *target.pointer_mut(pointer).unwrap() = value;
+            assert!(validate_fixture(&target).is_err(), "accepted {pointer}");
+        }
+        let mut target = target_fixture();
+        target["properties"]["enablePurgeProtection"] = json!(false);
+        assert!(validate_existing_target(&target, "eastus", "standard", 7, true).is_err());
+    }
+
+    #[tokio::test]
+    async fn existing_targets_are_never_written_including_dry_runs() {
+        for dry_run in [false, true] {
+            let target = target_fixture();
+            let result = select_target(
+                dry_run,
+                || async { Ok(Some(target.clone())) },
+                || async { panic!("must not overwrite an existing target") },
+                validate_fixture,
+            )
+            .await
+            .unwrap();
+            assert_eq!(result, TargetAction::Reuse);
+        }
+    }
+
+    #[tokio::test]
+    async fn lookup_and_compatibility_errors_never_create_targets() {
+        for dry_run in [false, true] {
+            let result = select_target(
+                dry_run,
+                || async { anyhow::bail!("forbidden") },
+                || async { panic!("must not create after failed lookup") },
+                validate_fixture,
+            )
+            .await;
+            assert!(result.unwrap_err().to_string().contains("forbidden"));
+            let mut target = target_fixture();
+            target["location"] = json!("westus");
+            assert!(
+                select_target(
+                    dry_run,
+                    || async { Ok(Some(target)) },
+                    || async { panic!("must not overwrite an incompatible target") },
+                    validate_fixture,
+                )
+                .await
+                .is_err()
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn dry_run_never_creates_missing_target() {
+        let action = select_target(
+            true,
+            || async { Ok(None) },
+            || async { panic!("dry run must not write") },
+            validate_fixture,
+        )
+        .await
+        .unwrap();
+        assert_eq!(action, TargetAction::WouldCreate);
+    }
+
+    #[tokio::test]
+    async fn retry_reuses_target_created_by_first_attempt() {
+        use std::cell::RefCell;
+        let stored = RefCell::new(None);
+        let writes = std::cell::Cell::new(0);
+        for expected in [TargetAction::Create, TargetAction::Reuse] {
+            let action = select_target(
+                false,
+                || async { Ok(stored.borrow().clone()) },
+                || async {
+                    writes.set(writes.get() + 1);
+                    let target = target_fixture();
+                    *stored.borrow_mut() = Some(target.clone());
+                    Ok(target)
+                },
+                validate_fixture,
+            )
+            .await
+            .unwrap();
+            assert_eq!(action, expected);
+        }
+        assert_eq!(writes.get(), 1);
+        assert_eq!(*stored.borrow(), Some(target_fixture()));
+    }
 
     #[tokio::test]
     async fn same_vault_migration_is_rejected_before_io() {

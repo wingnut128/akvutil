@@ -56,3 +56,19 @@ portability story across vault boundaries that `recreate` can reproduce —
 akvutil's `recreate` uses the service default size for those. Data
 encrypted directly under an octet key must be re-encrypted under the new
 key.
+
+## Existing destinations and retries
+
+`vault migrate` creates a destination only after an ARM lookup returns HTTP
+404. Authorization and server errors stop the migration. An existing target
+is reused without changing access policies, RBAC mode, tags, firewall, or
+service-access settings. It must match the effective location and SKU and
+have at least the source retention and purge protection. Dry runs perform
+these compatibility checks too.
+
+Source and destination must identify different vaults. Reusing an existing
+target does not make key migration idempotent: backup/restore fails for an
+existing key name, and recreate adds a new version. Inspect key inventories
+after a partial failure before retrying. Provisioning by another actor
+between lookup and creation is not synchronized; coordinate concurrent
+provisioning separately.

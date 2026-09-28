@@ -51,6 +51,10 @@ akvutil key migrate --source-vault kv-old --target-vault kv-new \
 
 Migration strategies: `recreate` builds same-shape keys (type, size, curve, ops) in the target — new key material, so consumers must be repointed and data re-wrapped. `backup-restore` preserves key material and versions but Azure only allows it within the same geography and subscription. Octet (oct/oct-HSM) keys never expose material, so `recreate` uses the service default size for those.
 
+`vault migrate` reuses a compatible existing destination without changing its permissions, RBAC mode, tags, or network settings. Its location and SKU must match the requested values (source defaults unless overridden), and retention/purge protection must be at least as strong as the source. Incompatible targets fail before key migration. Both migration commands reject identical source and target vaults, including equivalent names and URLs, even in dry-run mode.
+
+Retries preserve vault configuration, but key operations are not idempotent: backup/restore rejects an existing key name, while recreate can add a new version. Inventory the destination after a partial failure before retrying.
+
 See [docs/runbooks](docs/runbooks/README.md) for tier-migration runbooks (standard ↔ premium, Managed HSM) including the viability matrix and which paths are one-way.
 
 ### Search
@@ -87,4 +91,4 @@ akvutil key rotate --vault v --name k
 ## Notes
 
 - Crate versions in `Cargo.toml` were verified against crates.io in July 2026. The SDK models are generated; if a point release renames a field the compiler will point right at it.
-- `cargo test` runs ~45 offline unit tests covering URI normalization, RSA size inference, KQL query assembly and glob/injection escaping, region row projection, duration/timestamp parsing, and CLI parsing.
+- `cargo test` runs offline unit tests covering URI normalization, RSA size inference, KQL query assembly and glob/injection escaping, region row projection, duration/timestamp parsing, and CLI parsing.

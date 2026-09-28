@@ -68,7 +68,7 @@ pub enum VaultCommand {
         #[arg(long = "resource-group", short = 'g')]
         resource_group: String,
     },
-    /// Migrate a vault: create the target vault and move its keys
+    /// Migrate a vault: create or reuse the target vault and copy its keys
     Migrate(VaultMigrateArgs),
 }
 

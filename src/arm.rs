@@ -60,8 +60,12 @@ async fn check(resp: reqwest::Response) -> Result<Value> {
     // (gateway 502/503 pages, auth challenges, empty bodies), and discarding
     // them hides the real cause behind "no error detail".
     let text = resp.text().await.unwrap_or_default();
+    check_body(status, &text)
+}
+
+fn check_body(status: reqwest::StatusCode, text: &str) -> Result<Value> {
     if !status.is_success() {
-        let msg = serde_json::from_str::<Value>(&text)
+        let msg = serde_json::from_str::<Value>(text)
             .ok()
             .and_then(|b| {
                 b.pointer("/error/message")
@@ -78,13 +82,17 @@ async fn check(resp: reqwest::Response) -> Result<Value> {
             });
         bail!("ARM request failed ({status}): {msg}");
     }
-    Ok(serde_json::from_str(&text).unwrap_or(Value::Null))
+    Ok(serde_json::from_str(text).unwrap_or(Value::Null))
 }
 
 /// Attach the ARM bearer token, send, and retry on throttling (429) and
 /// transient server errors, honoring `Retry-After` when present. Returns the
 /// parsed JSON body on success.
 async fn send(ctx: &Context, req: reqwest::RequestBuilder) -> Result<Value> {
+    check(send_response(ctx, req).await?).await
+}
+
+async fn send_response(ctx: &Context, req: reqwest::RequestBuilder) -> Result<reqwest::Response> {
     let req = req.bearer_auth(ctx.arm_token().await?);
     let mut attempt = 0;
     loop {
@@ -106,7 +114,7 @@ async fn send(ctx: &Context, req: reqwest::RequestBuilder) -> Result<Value> {
             attempt += 1;
             continue;
         }
-        return check(resp).await;
+        return Ok(resp);
     }
 }
 
@@ -121,14 +129,43 @@ pub async fn tenant_id(ctx: &Context) -> Result<String> {
         .context("subscription response missing tenantId")
 }
 
-pub async fn get_vault(ctx: &Context, name: &str, resource_group: &str) -> Result<Value> {
+fn vault_url(ctx: &Context, name: &str, resource_group: &str) -> Result<String> {
     let sub = seg(ctx.subscription()?);
     let rg = seg(resource_group);
     let name = seg(name);
-    let url = format!(
+    Ok(format!(
         "{ARM}/subscriptions/{sub}/resourceGroups/{rg}/providers/Microsoft.KeyVault/vaults/{name}?api-version={VAULT_API}"
-    );
-    send(ctx, ctx.http.get(&url)).await
+    ))
+}
+
+pub async fn get_vault(ctx: &Context, name: &str, resource_group: &str) -> Result<Value> {
+    send(ctx, ctx.http.get(vault_url(ctx, name, resource_group)?)).await
+}
+
+/// Only a genuine HTTP 404 authorizes creating a missing migration target.
+pub async fn get_vault_if_exists(
+    ctx: &Context,
+    name: &str,
+    resource_group: &str,
+) -> Result<Option<Value>> {
+    let resp = send_response(ctx, ctx.http.get(vault_url(ctx, name, resource_group)?)).await?;
+    let status = resp.status();
+    let text = resp
+        .text()
+        .await
+        .context("failed to read target vault response")?;
+    decode_optional_vault(status, &text)
+}
+
+fn decode_optional_vault(status: reqwest::StatusCode, text: &str) -> Result<Option<Value>> {
+    if status == reqwest::StatusCode::NOT_FOUND {
+        return Ok(None);
+    }
+    let body = check_body(status, text)?;
+    if !body.is_object() || !body.get("properties").is_some_and(Value::is_object) {
+        bail!("target vault response missing properties object");
+    }
+    Ok(Some(body))
 }
 
 pub async fn create_vault(ctx: &Context, spec: &VaultSpec<'_>) -> Result<Value> {
@@ -223,4 +260,47 @@ pub async fn graph_query(ctx: &Context, query: &str) -> Result<Vec<Value>> {
         }
     }
     Ok(rows)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use reqwest::StatusCode;
+
+    #[test]
+    fn optional_vault_lookup_distinguishes_absence_from_errors() {
+        let body = r#"{"name":"target","properties":{"sku":{"name":"standard"}}}"#;
+        assert_eq!(
+            decode_optional_vault(StatusCode::OK, body).unwrap(),
+            Some(serde_json::from_str(body).unwrap())
+        );
+        assert_eq!(
+            decode_optional_vault(StatusCode::NOT_FOUND, "not found").unwrap(),
+            None
+        );
+        for status in [
+            StatusCode::UNAUTHORIZED,
+            StatusCode::FORBIDDEN,
+            StatusCode::TOO_MANY_REQUESTS,
+            StatusCode::INTERNAL_SERVER_ERROR,
+        ] {
+            assert!(
+                decode_optional_vault(
+                    status,
+                    r#"{"error":{"message":"404 in text is not absence"}}"#
+                )
+                .is_err()
+            );
+        }
+    }
+
+    #[test]
+    fn optional_vault_lookup_rejects_malformed_success() {
+        for body in ["", "gateway error", "null", "[]", "{}"] {
+            assert!(
+                decode_optional_vault(reqwest::StatusCode::OK, body).is_err(),
+                "accepted {body:?}"
+            );
+        }
+    }
 }
